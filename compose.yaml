@@ -1,0 +1,30 @@
+name: teams
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # No own login: Pocket ID gate in front (personal-infra apps/teams), and only the k3s nodes
+      # may reach the app port on ghs (personal-infra hosts/ghs firewall).
+      APP_AUTH: none
+    volumes:
+      # Microsoft refresh token (school account): back it up like a password
+      - data:/data
+    ports:
+      # Reached only through https://teams.galsever.com (k3s relay); the ghs firewall drops everyone else.
+      - "8788:8000"
+    tmpfs:
+      - /tmp
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 512m }
+    logging:
+      driver: local
+      options: { max-size: 10m, max-file: "3" }
+
+volumes:
+  data: {}

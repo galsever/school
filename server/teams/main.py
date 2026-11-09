@@ -1,0 +1,174 @@
+"""Teams API server. Contract: docs/API.md."""
+
+import asyncio
+import logging
+import time
+from urllib.parse import urlencode
+
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+
+from . import auth, config, upstream
+from .ms import NotConnected, session
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+log = logging.getLogger("teams")
+
+app = FastAPI(title="Teams", docs_url=None, redoc_url=None, openapi_url=None)
+guard = [Depends(auth.require)]
+
+
+@app.exception_handler(HTTPException)
+async def _http_error(request: Request, exc: HTTPException):
+    detail = exc.detail if isinstance(exc.detail, dict) else {"error": "error", "detail": str(exc.detail)}
+    return JSONResponse(detail, status_code=exc.status_code)
+
+
+@app.exception_handler(NotConnected)
+async def _not_connected(request: Request, exc: NotConnected):
+    return JSONResponse({"error": "ms_not_connected", "detail": "Sign in to Microsoft first"}, status_code=409)
+
+
+@app.exception_handler(upstream.Upstream)
+async def _upstream(request: Request, exc: upstream.Upstream):
+    log.warning("upstream %s %s: %s", request.url.path, exc.status, exc)
+    status = 404 if exc.status == 404 else 502
+    return JSONResponse({"error": "upstream", "detail": str(exc)[:300]}, status_code=status)
+
+
+# ---- app login (only when APP_AUTH=password) ---------------------------------
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    return {"authenticated": auth.is_authenticated(request)}
+
+
+@app.get("/api/app/handoff")
+def app_handoff(request: Request, state: str = ""):
+    """Android login: the app opens the Pocket ID gate in a Chrome tab with rd= this URL; behind the gate
+    the request carries the gate cookie, which goes back to the app through its own scheme."""
+    cookie = request.cookies.get("_oauth2_proxy")
+    if not cookie or not state or len(state) > 64:
+        raise HTTPException(400, "no gate session")
+    return RedirectResponse(
+        "com.galsever.teams://auth?" + urlencode({"state": state, "c": cookie}),
+        status_code=302,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+_failed: list[float] = []
+
+
+@app.post("/api/auth/login")
+async def login(payload: dict = Body(...)):
+    now = time.time()
+    _failed[:] = [t for t in _failed if now - t < 600]
+    if len(_failed) >= 10:
+        raise HTTPException(429, {"error": "too_many_attempts", "detail": "Try again later"})
+    if not auth.check_password(str(payload.get("password", ""))):
+        _failed.append(now)
+        await asyncio.sleep(1)
+        raise HTTPException(401, {"error": "bad_password", "detail": "Wrong password"})
+    response = Response(status_code=204)
+    auth.issue(response)
+    return response
+
+
+@app.post("/api/auth/logout")
+def logout():
+    response = Response(status_code=204)
+    auth.clear(response)
+    return response
+
+
+# ---- Microsoft account -------------------------------------------------------
+
+@app.get("/api/ms/status", dependencies=guard)
+async def ms_status():
+    if not session.connected:
+        return {"connected": False, "device": session.device}
+    return {"connected": True, "me": await upstream.me()}
+
+
+@app.post("/api/ms/device", dependencies=guard)
+async def ms_device():
+    return await session.start_device_login()
+
+
+@app.get("/api/ms/device", dependencies=guard)
+def ms_device_state():
+    return session.device or {"state": "none"}
+
+
+@app.post("/api/ms/logout", dependencies=guard)
+def ms_logout():
+    session.logout()
+    return Response(status_code=204)
+
+
+# ---- chats -------------------------------------------------------------------
+
+@app.get("/api/chats", dependencies=guard)
+async def chats():
+    return await upstream.chats()
+
+
+@app.get("/api/chats/{conv}/messages", dependencies=guard)
+async def messages(conv: str, cursor: str | None = None):
+    return await upstream.messages(conv, cursor)
+
+
+@app.post("/api/chats/{conv}/messages", dependencies=guard)
+async def send(conv: str, payload: dict = Body(...)):
+    text = str(payload.get("text", "")).strip()
+    if not text or len(text) > 28000:
+        raise HTTPException(400, {"error": "bad_text", "detail": "Empty or too long"})
+    return await upstream.send(conv, text)
+
+
+@app.post("/api/chats/{conv}/read", dependencies=guard)
+async def mark_read(conv: str, payload: dict = Body(...)):
+    mid = str(payload.get("messageId", ""))
+    if not mid.isdigit():
+        raise HTTPException(400, {"error": "bad_id", "detail": "messageId"})
+    await upstream.mark_read(conv, mid)
+    return Response(status_code=204)
+
+
+# ---- teams, assignments ------------------------------------------------------
+
+@app.get("/api/teams", dependencies=guard)
+async def teams():
+    return await upstream.teams()
+
+
+@app.get("/api/assignments", dependencies=guard)
+async def assignments():
+    return await upstream.assignments()
+
+
+@app.get("/api/assignments/{class_id}/{aid}", dependencies=guard)
+async def assignment(class_id: str, aid: str):
+    return await upstream.assignment(class_id, aid)
+
+
+# ---- website -----------------------------------------------------------------
+
+@app.get("/{path:path}", include_in_schema=False)
+def spa(path: str):
+    if path.startswith("api/"):
+        raise HTTPException(404, {"error": "not_found", "detail": "Not found"})
+    target = (config.WEB_DIR / path).resolve()
+    if path and target.is_file() and config.WEB_DIR.resolve() in target.parents:
+        cache_header = "public, max-age=31536000, immutable" if path.startswith("assets/") else "no-cache"
+        return FileResponse(target, headers={"Cache-Control": cache_header})
+    index = config.WEB_DIR / "index.html"
+    if not index.exists():
+        return JSONResponse({"error": "no_frontend", "detail": "Website not built"}, status_code=503)
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})

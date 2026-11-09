@@ -1,0 +1,5 @@
+name: teams
+compose_files: [compose.yaml]
+timeout: 15m
+remove_orphans: true
+prune_images: true
