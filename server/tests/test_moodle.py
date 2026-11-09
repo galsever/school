@@ -328,6 +328,32 @@ def test_choice(fake):
     assert c["note"] == "This activity closed" and not c["canAnswer"] and [o["id"] for o in c["options"]] == [2]
 
 
+PUB = """<div role="main"><h2>Infos &amp; Files</h2>
+<input type="submit" value="Edit/upload files">
+<div id="id_myfilescontainer"><table class="table table-striped w-100"><tr><th>Own files</th><td>
+<a href="https://moodle.test/mod/publication/view.php?id=9&amp;download=11">Mine.pdf<span class="visually-hidden"> PDF</span></a></td></tr></table></div>
+<table class="flexible table table-striped table-hover publications"><thead><tr><th>x</th></tr></thead><tbody>
+<tr id="r0"><td class="c0"><input></td><td class="c1"><img> <a href="https://moodle.test/mod/publication/view.php?id=9&amp;download=12">Theirs &amp; co.zip<span class="visually-hidden"> ZIP</span></a></td>
+<td class="c2"><span>Wednesday, 4 November 2026, 11:21 AM</span></td><td class="c3"><a>MM</a> <a>Max Muster</a></td></tr>
+</tbody></table>{more}</div>"""
+
+
+def test_publication(fake, monkeypatch):
+    pages = []
+
+    async def web(path, stream=False):
+        pages.append(path)
+        more = '<a href="view.php?id=9&amp;allfilespage=0&amp;page=1">2</a>' if path.endswith("page=0") else ""
+        return httpx.Response(200, text=PUB.replace("{more}", more))
+
+    monkeypatch.setattr(md, "web", web)
+    p = run(md.publication(9))
+    assert pages == ["/mod/publication/view.php?id=9&page=0", "/mod/publication/view.php?id=9&page=1"]
+    assert p["canUpload"] and p["own"] == [{"id": 11, "name": "Mine.pdf"}]
+    assert p["files"][0] == {"id": 12, "name": "Theirs & co.zip", "modified": "Wednesday, 4 November 2026, 11:21 AM", "by": "Max Muster"}
+    assert len(p["files"]) == 2
+
+
 def test_office_text():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:

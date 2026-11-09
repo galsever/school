@@ -139,6 +139,16 @@ async def assignment(cmid: int, course: int = 0):
     return await md.describe_assignment(await md.find_assignment(cmid, course, by="cmid"))
 
 
+@router.get("/publications/{cmid}")
+async def publication(cmid: int):
+    return await md.publication(cmid)
+
+
+@router.get("/publications/{cmid}/files/{file_id}")
+async def publication_file(cmid: int, file_id: int, download: bool = False):
+    return _stream(*await md.publication_file(cmid, file_id), download)
+
+
 @router.get("/choices/{cmid}")
 async def choice(cmid: int, course: int = 0):
     return await md.choice(cmid, course)

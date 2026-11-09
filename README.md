@@ -69,6 +69,10 @@ from that login; a rejected login blocks every call until the login is changed, 
   drop, submit, feedback.
 - **Hand-in.** Moodle replaces the whole submission on every save, so the server copies the files already there into
   the new draft and sends the current online text along. Assignments with a submit button stay a draft until Submit.
+- **Choices and publications** open inside their course: a choice shows Moodle's responses (one column per option
+  with count, limit and names, your pick marked) and lets you pick with Save while it is open; a publication lists
+  your files and everybody's published files. Publication has no app API, so the server reads it from the Moodle
+  website with a session logged in with the stored password (memory only).
 - Files and embedded images are streamed through the server (`/api/moodle/file`), because they need the token; only
   addresses on the Moodle itself are fetched, and the token is blanked in the request log.
 

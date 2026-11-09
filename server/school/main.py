@@ -53,7 +53,7 @@ async def _moodle(request: Request, exc: moodle.MoodleError):
     if exc.not_connected:
         return JSONResponse({"error": "moodle_not_connected", "detail": str(exc)}, status_code=409)
     log.warning("moodle %s %s: %s", request.url.path, exc.code, exc)
-    status = {"not_found": 404, "bad_url": 400, "bad_request": 400, "locked": 400, "warning": 400}.get(exc.code, 502)
+    status = {"not_found": 404, "web_login": 502, "bad_url": 400, "bad_request": 400, "locked": 400, "warning": 400}.get(exc.code, 502)
     return JSONResponse({"error": "moodle", "detail": str(exc)[:300]}, status_code=status)
 
 

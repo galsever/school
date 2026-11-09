@@ -42,7 +42,7 @@ import {
   type MoodleGrade,
   type MoodleModule,
 } from '@/lib/moodle'
-import { ChoiceBody } from '@/routes/moodle-choice'
+import { ChoiceBody, PublicationBody } from '@/routes/moodle-choice'
 import { cn } from '@/lib/utils'
 import { MoodleAssignmentView } from '@/routes/moodle-assignment'
 
@@ -277,6 +277,7 @@ function moduleIcon(m: MoodleModule) {
   if (m.type === 'folder') return Folder
   if (m.type === 'url') return Link2
   if (m.type === 'choice') return ListChecks
+  if (m.type === 'publication') return Folder
   if (m.type === 'resource' && m.files.length) return iconFor(m.files[0].name)
   if (m.type === 'page') return FileText
   return ExternalLink
@@ -454,6 +455,7 @@ const TONES: Record<string, string> = {
   folder: 'bg-sky-500/15 text-sky-400',
   page: 'bg-sky-500/15 text-sky-400',
   choice: 'bg-amber-500/15 text-amber-400',
+  publication: 'bg-sky-500/15 text-sky-400',
   url: 'bg-emerald-500/15 text-emerald-400',
   forum: 'bg-emerald-500/15 text-emerald-400',
   other: 'bg-white/5 text-muted-foreground',
@@ -578,6 +580,14 @@ function ModuleRow({
         <ChevronRight className={cn('size-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
       </button>,
       expanded && <ChoiceBody cmid={m.cmid} courseId={courseId} />,
+    )
+  if (m.type === 'publication')
+    return wrap(
+      <button className={rowCls} onClick={() => setExpanded((v) => !v)}>
+        {name}
+        <ChevronRight className={cn('size-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
+      </button>,
+      expanded && <PublicationBody cmid={m.cmid} url={m.url} />,
     )
   // links, forums, quizzes and everything else open where they live
   return wrap(

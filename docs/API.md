@@ -116,7 +116,9 @@ Errors: 409 `moodle_not_connected` (no login, or Moodle rejects it), 400 / 404 /
 | `GET /api/moodle/courses/{id}` | `{id, name, total, grades, sections}`; a section has `modules[]` with `cmid, name, type, url, description (HTML), files[], link, done, restricted, dates[]`, assignments also `status` (none, draft, submitted, reopened) and `grade`. `total` = course total when graded, `grades` = graded items that are not an assignment row |
 | `GET /api/moodle/courses/{id}/grades` | every grade item, graded or not (the website uses `grades` of the course instead): `name, type, total, cmid, grade, range, percentage, weight, feedback, gradedAt` |
 | `GET /api/moodle/assignments/{cmid}?course=` | the assignment: `description (HTML), attachments, due, cutoff, files, maxFiles, maxBytes, onlineText, submitButton, submission {status, canEdit, needsSubmit, files, text}, feedback` |
-| `GET /api/moodle/choices/{cmid}?course=` | a choice activity: `{name, intro (HTML), multiple, answered, canAnswer, note, options[]}`, an option has `id, text, checked, disabled, count, max, people[]` |
+| `GET /api/moodle/choices/{cmid}?course=` | a choice activity: `{name, intro (HTML), multiple, answered, canAnswer, note, options[], unanswered[]}`, an option has `id, text, checked, disabled, count, max, people[]` |
+| `GET /api/moodle/publications/{cmid}` | a publication (student files): `{own[], files[] {id, name, modified, by}, canUpload}`. The plugin has no app API: read from the Moodle website with a session logged in with the stored password |
+| `GET /api/moodle/publications/{cmid}/files/{id}?download=` | one of its files, inline like `/file` |
 | `POST /api/moodle/choices/{cmid}?course=` | `{options: [ids]}` picks for real -> the choice afterwards |
 | `POST /api/moodle/uploads?name=` | raw file body (max 100 MB) -> `{id, size}`; waits an hour at most for a submission |
 | `POST /api/moodle/assignments/{cmid}/submission?course=` | `{add: [upload ids], remove: [file names], text}` -> the assignment afterwards. Files already there are kept |

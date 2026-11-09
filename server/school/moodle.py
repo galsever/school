@@ -649,6 +649,111 @@ async def grade_items(course_id: int) -> list[dict]:
     return rows
 
 
+# ---- web pages (plugins without an app API, e.g. publication) -----------------------------
+
+_web_client: httpx.AsyncClient | None = None
+_web_lock = asyncio.Lock()
+
+
+async def _web_login(login: dict) -> httpx.AsyncClient:
+    """A browser-like session on the Moodle website, logged in with the stored password (kept in memory only)."""
+    c = httpx.AsyncClient(timeout=60, follow_redirects=True, headers={"User-Agent": "school-hub"})
+    try:
+        r = await c.get(f"{login['url']}/login/index.php")
+        token = re.search(r'name="logintoken" value="([^"]+)"', r.text)
+        r = await c.post(
+            f"{login['url']}/login/index.php",
+            data={"username": login["user"], "password": login["password"], "logintoken": token.group(1) if token else ""},
+        )
+    except httpx.HTTPError as e:
+        await c.aclose()
+        raise MoodleError(f"Moodle does not answer: {e or type(e).__name__}", "network") from None
+    if "/login/" in r.url.path:
+        await c.aclose()
+        # the token login works with the same password, so this is Moodle refusing the website login: never retry in a loop
+        raise MoodleError("Moodle refuses the website login", "web_login")
+    return c
+
+
+async def web(path: str, stream: bool = False) -> httpx.Response:
+    """GET a page or file of the Moodle website with the session; logs in again once when the session ran out."""
+    global _web_client
+    login = load_login()
+    if not login:
+        raise MoodleError("Moodle is not connected", "not_connected")
+    for attempt in (0, 1):
+        async with _web_lock:
+            if _web_client is None:
+                _web_client = await _web_login(login)
+            c = _web_client
+        try:
+            r = await c.send(c.build_request("GET", login["url"] + path), stream=stream, follow_redirects=True)
+        except httpx.HTTPError as e:
+            raise MoodleError(f"Moodle does not answer: {e or type(e).__name__}", "network") from None
+        if "/login/" not in r.url.path:
+            return r
+        await r.aclose()
+        async with _web_lock:
+            if _web_client is c:
+                _web_client = None
+    raise MoodleError("Moodle website session lost", "web_login")
+
+
+_TAG = re.compile(r"<[^>]+>")
+_FILE_LINK = re.compile(r'<a href="[^"]*?download=(\d+)"[^>]*>(.*?)<span class="visually-hidden">', re.S)
+
+
+def _cell(html_part: str) -> str:
+    return " ".join(plain(_TAG.sub(" ", html_part)).split())
+
+
+async def publication(cmid: int) -> dict:
+    """A publication (student files folder): own files and everybody's published files, all pages."""
+    own: list[dict] = []
+    files: list[dict] = []
+    page = 0
+    while page < 20:
+        r = await web(f"/mod/publication/view.php?id={cmid}&page={page}")
+        h = r.text
+        if page == 0:
+            box = h[h.find('id="id_myfilescontainer"'):]
+            box = box[: box.find("</table>")]
+            own = [{"id": int(i), "name": _cell(n)} for i, n in _FILE_LINK.findall(box)]
+            can_upload = 'value="Edit/upload files"' in h or "Edit/upload" in h
+        table = h[h.find('class="flexible table table-striped table-hover publications"'):]
+        table = table[: table.find("</table>")]
+        for row in re.findall(r"<tr[^>]*>(.*?)</tr>", table, re.S)[1:]:
+            cells = re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)
+            link = _FILE_LINK.search(row)
+            if not link or len(cells) < 4:
+                continue
+            files.append({"id": int(link.group(1)), "name": _cell(link.group(2)), "modified": _cell(cells[2]), "by": re.sub(r"^[A-Z]{2} ", "", _cell(cells[3]))})
+        if f"&amp;page={page + 1}" not in h:
+            break
+        page += 1
+    return {"cmid": cmid, "own": own, "files": files, "canUpload": can_upload}
+
+
+async def publication_file(cmid: int, file_id: int):
+    """(name, media type, size, body) of one file of a publication."""
+    r = await web(f"/mod/publication/view.php?id={cmid}&download={file_id}", stream=True)
+    mime = r.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
+    if r.status_code != 200 or mime == "text/html":
+        await r.aclose()
+        raise MoodleError("File not available", "not_found")
+    name = _disposition_name(r.headers.get("content-disposition", "")) or "file"
+    size = r.headers.get("content-length")
+
+    async def body():
+        try:
+            async for chunk in r.aiter_bytes():
+                yield chunk
+        finally:
+            await r.aclose()
+
+    return name, mime, int(size) if size and size.isdigit() else None, body()
+
+
 # ---- choices -------------------------------------------------------------------------
 
 async def _find_choice(cmid: int, course_id: int) -> dict:
@@ -668,6 +773,7 @@ async def choice(cmid: int, course_id: int = 0) -> dict:
         _or(cached("mod_choice_get_choice_results", {"choiceid": c["id"]}), {}),
     )
     taken = {r["id"]: r for r in results.get("options") or [] if r.get("id")}
+    unanswered = [plain(u.get("fullname")) for r in results.get("options") or [] if not r.get("id") for u in r.get("userresponses") or []]
     rows = opts.get("options") or []
     closed = not rows  # closed or not open yet: Moodle gives no options, only the reason
     if closed:
@@ -700,6 +806,8 @@ async def choice(cmid: int, course_id: int = 0) -> dict:
         "canAnswer": not closed and (not answered or bool(c.get("allowupdate"))) and any(not o["disabled"] or o["checked"] for o in options),
         "note": "; ".join(w.get("message", "") for w in opts.get("warnings") or []) if closed else "",
         "options": options,
+        # who has not picked yet (only when the teacher shows it)
+        "unanswered": unanswered,
     }
 
 
