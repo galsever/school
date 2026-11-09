@@ -32,7 +32,7 @@ async def _not_connected(request: Request, exc: NotConnected):
 @app.exception_handler(upstream.Upstream)
 async def _upstream(request: Request, exc: upstream.Upstream):
     log.warning("upstream %s %s: %s", request.url.path, exc.status, exc)
-    status = 404 if exc.status == 404 else 502
+    status = exc.status if exc.status in (400, 404) else 502
     return JSONResponse({"error": "upstream", "detail": str(exc)[:300]}, status_code=status)
 
 
@@ -289,12 +289,25 @@ async def mail_reply(mid: str, payload: dict = Body(...)):
     return Response(status_code=204)
 
 
+@app.get("/api/mail/{mid}/attachments/{aid}/parts/{n}", dependencies=guard)
+async def mail_signed_part(mid: str, aid: str, n: int, download: bool = False):
+    """A file from inside an S/MIME signed mail (see mail.signed_parts)."""
+    _mid(mid, aid)
+    parts = await mail.signed_parts(mid, aid)
+    if not 0 <= n < len(parts):
+        raise HTTPException(404, {"error": "not_found", "detail": "No such part"})
+    return _mail_file(parts[n]["data"], parts[n]["type"], parts[n]["name"] or "file", download)
+
+
 @app.get("/api/mail/{mid}/attachments/{aid}", dependencies=guard)
 async def mail_attachment(mid: str, aid: str, download: bool = False):
     _mid(mid, aid)
+    return _mail_file(*await mail.attachment(mid, aid), download)
+
+
+def _mail_file(data: bytes, ctype: str, name: str, download: bool) -> Response:
     from urllib.parse import quote
 
-    data, ctype, name = await mail.attachment(mid, aid)
     inline = ctype.startswith(("image/", "application/pdf", "text/plain")) and "svg" not in ctype and not download
     return Response(
         data,

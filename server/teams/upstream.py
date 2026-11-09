@@ -32,7 +32,12 @@ class Upstream(Exception):
 
 def _check(r):
     if r.status_code >= 400:
-        raise Upstream(r.status_code, r.text[:300])
+        detail = r.text[:300]
+        try:
+            detail = str(r.json()["error"]["message"])[:300]  # Graph's error shape: show the message, not the JSON
+        except Exception:
+            pass
+        raise Upstream(r.status_code, detail)
     return r
 
 

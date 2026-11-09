@@ -41,6 +41,8 @@ function RailLink({ item, badge }: { item: NavItem; badge: number }) {
 export function AppShell() {
   const chats = useQuery(q.chats())
   const unread = chats.data?.filter((c) => c.unread).length ?? 0
+  const mailUnread = useQuery(q.mailUnread()).data?.count ?? 0
+  const badge = (to: string) => (to === '/chats' ? unread : to === '/mail' ? mailUnread : 0)
   useNotifications(chats.data)
   useEffect(() => {
     document.title = unread ? `(${unread}) Teams` : 'Teams'
@@ -53,7 +55,7 @@ export function AppShell() {
       <nav className="hidden w-16 shrink-0 flex-col items-center gap-2 border-r border-sidebar-border bg-sidebar py-3 md:flex">
         <img src="/favicon.svg" alt="" className="mb-3 size-8" />
         {nav.slice(0, 4).map((item) => (
-          <RailLink key={item.to} item={item} badge={item.to === '/chats' ? unread : 0} />
+          <RailLink key={item.to} item={item} badge={badge(item.to)} />
         ))}
         <div className="flex-1" />
         <RailLink item={nav[4]} badge={0} />
@@ -76,7 +78,7 @@ export function AppShell() {
           >
             <Icon className="size-5" strokeWidth={1.75} />
             {label}
-            {to === '/chats' && unread > 0 && <Badge n={unread} />}
+            {badge(to) > 0 && <Badge n={badge(to)} />}
           </Link>
         ))}
       </nav>

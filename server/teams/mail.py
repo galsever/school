@@ -1,6 +1,9 @@
 """School Outlook mail through Graph with the same login (Mail.ReadWrite, Mail.Send are in the Teams client's token)."""
 
+import email
+import email.policy
 import re
+import time
 from urllib.parse import quote
 
 from .ms import GRAPH, session
@@ -48,8 +51,10 @@ async def list_mail(folder: str = "inbox", cursor: str | None = None, unread_onl
         path = cursor[len(GRAPH_URL):]
     else:
         path = f"/me/mailFolders/{f}/messages?$top=50&$select={LIST_FIELDS}"
+        # the term is sent as one quoted phrase: a quote or backslash inside it is a Graph syntax error
+        search = re.sub(r'["\\]+', " ", search[:100]).strip()
         if search:
-            path += "&$search=" + quote(f'"{search[:100]}"')  # $search cannot be combined with $orderby
+            path += "&$search=" + quote(f'"{search}"')  # $search cannot be combined with $orderby
         else:
             path += "&$orderby=receivedDateTime desc"
             if unread_only:
@@ -61,6 +66,37 @@ async def list_mail(folder: str = "inbox", cursor: str | None = None, unread_onl
 async def unread_count() -> int:
     d = (await _req("GET", "/me/mailFolders/inbox?$select=unreadItemCount")).json()
     return int(d.get("unreadItemCount") or 0)
+
+
+_signed: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+
+
+async def signed_parts(mid: str, aid: str) -> list[dict]:
+    """Leaf parts of an S/MIME signed mail. Graph hands the whole signed MIME over as one attachment
+    (smime.p7m, multipart/signed), so its inline images and real attachments are only in there."""
+    hit = _signed.get((mid, aid))
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    data = (await _req("GET", f"/me/messages/{mid}/attachments/{aid}/$value")).content
+    parts = []
+    for p in email.message_from_bytes(data, policy=email.policy.default).walk():
+        if p.is_multipart():
+            continue
+        ctype, name = p.get_content_type(), p.get_filename() or ""
+        if "pkcs7-signature" in ctype or (ctype in ("text/plain", "text/html") and not name):
+            continue  # the signature and the body Graph already gave us
+        parts.append(
+            {
+                "name": name,
+                "type": ctype,
+                "cid": (p.get("Content-ID") or "").strip().strip("<>"),
+                "data": p.get_payload(decode=True) or b"",
+            }
+        )
+    if len(_signed) >= 8:
+        _signed.pop(min(_signed, key=lambda k: _signed[k][0]))
+    _signed[(mid, aid)] = (time.time(), parts)
+    return parts
 
 
 async def get_mail(mid: str, mark_read: bool = True) -> dict:
@@ -81,10 +117,27 @@ async def get_mail(mid: str, mark_read: bool = True) -> dict:
             )
         ).json().get("value", [])
     # inline images: src="cid:<contentId>" -> our attachment route
+    base = f"/api/mail/{quote(mid, safe='')}/attachments/"
+    files = []
     for a in atts:
+        url = base + quote(a["id"], safe="")
         if a.get("contentId"):
-            url = f"/api/mail/{quote(mid, safe='')}/attachments/{quote(a['id'], safe='')}"
             body = body.replace(f'cid:{a["contentId"]}', url)
+        if (a.get("contentType") or "").startswith("multipart/signed"):
+            try:
+                parts = await signed_parts(mid, a["id"])
+            except Exception:  # not parseable: keep the p7m as a plain attachment
+                parts = None
+            if parts is not None:
+                for n, p in enumerate(parts):
+                    inline = bool(p["cid"]) and f'cid:{p["cid"]}' in body
+                    if inline:
+                        body = body.replace(f'cid:{p["cid"]}', f"{url}/parts/{n}")
+                    else:
+                        files.append({"id": f'{a["id"]}/parts/{n}', "name": p["name"] or "file", "size": len(p["data"]), "type": p["type"], "url": f"{url}/parts/{n}"})
+                continue
+        if not a.get("isInline"):
+            files.append({"id": a["id"], "name": a.get("name", ""), "size": a.get("size"), "type": a.get("contentType", ""), "url": url})
     if mark_read and not m.get("isRead"):
         await _req("PATCH", f"/me/messages/{mid}", json={"isRead": True})
     out = _summary(m)
@@ -92,11 +145,7 @@ async def get_mail(mid: str, mark_read: bool = True) -> dict:
         {
             "cc": [_addr(r) for r in m.get("ccRecipients") or []],
             "html": body,
-            "files": [
-                {"id": a["id"], "name": a.get("name", ""), "size": a.get("size"), "type": a.get("contentType", "")}
-                for a in atts
-                if not a.get("isInline")
-            ],
+            "files": files,
         }
     )
     return out

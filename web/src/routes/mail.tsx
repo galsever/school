@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, Outlet, useNavigate, useParams, useRouterState, useSearch } from '@tanstack/react-router'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Loader2, Mail as MailIcon, Paperclip, Reply, ReplyAll, Search, SendHorizontal, SquarePen, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, Outlet, useBlocker, useNavigate, useParams, useRouterState, useSearch } from '@tanstack/react-router'
+import { type InfiniteData, keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { ArrowLeft, Ellipsis, ImageOff, Loader2, Mail as MailIcon, Paperclip, Reply, ReplyAll, Search, SendHorizontal, SquarePen, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar } from '@/components/Avatar'
 import { ErrorView } from '@/components/ErrorView'
@@ -10,9 +10,9 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { api, errorText } from '@/lib/api'
-import { longTime, safeHtml, shortTime } from '@/lib/format'
+import { longTime, mailHtml, shortTime } from '@/lib/format'
 import { q, queryClient } from '@/lib/query'
-import type { MailAddress, MailFolder } from '@/lib/types'
+import type { Mail, MailAddress, MailFolder, MailPage as MailListPage } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 const FOLDERS: { key: MailFolder; label: string }[] = [
@@ -31,7 +31,7 @@ export function MailLayout() {
   const { compose } = useSearch({ strict: false }) as MailSearch
   return (
     <div className="flex h-full">
-      <MailList className={cn('w-full md:w-96 md:border-r', (open || compose) && 'hidden md:flex')} />
+      <MailList className={cn('w-full md:w-80 md:border-r', (open || compose) && 'hidden md:flex')} />
       <section className={cn('min-w-0 flex-1', !open && !compose && 'hidden md:block')}>
         {compose ? <Compose /> : <Outlet />}
       </section>
@@ -65,7 +65,16 @@ function MailList({ className }: { className?: string }) {
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search" className="h-9 pl-9" />
+            <Input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search" className="h-9 pr-8 pl-9" />
+            {term && (
+              <button
+                className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                onClick={() => setTerm('')}
+                aria-label="Clear"
+              >
+                <X className="size-4" />
+              </button>
+            )}
           </div>
           <Button size="icon" className="size-9 shrink-0" aria-label="New mail" onClick={() => void navigate({ to: '/mail', search: { ...fs(folder), compose: true } })}>
             <SquarePen />
@@ -88,7 +97,7 @@ function MailList({ className }: { className?: string }) {
         </div>
       </div>
       <div
-        className="tm-scroll min-h-0 flex-1 overflow-y-auto px-1.5 pb-3"
+        className={cn('tm-scroll min-h-0 flex-1 overflow-y-auto px-1.5 pb-3 transition-opacity', list.isPlaceholderData && 'opacity-50')}
         onScroll={(e) => {
           const el = e.currentTarget
           if (el.scrollTop + el.clientHeight > el.scrollHeight - 400 && list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage()
@@ -131,15 +140,22 @@ function MailList({ className }: { className?: string }) {
   )
 }
 
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+/** Forwards keep their quoted part open: it is the content. */
+const FORWARD = /^\s*(fwd?|wg|tr)\s*:/i
+
 export function MailPage() {
   const { id } = useParams({ from: '/shell/mail/$id' })
   const { folder } = useSearch({ strict: false }) as MailSearch
   const m = useQuery(q.mail(id))
-  const html = useMemo(() => safeHtml(m.data?.html ?? ''), [m.data?.html])
 
-  // opening marks it read on the server: refresh the list's dot
+  // opening an unread mail marks it read on the server: clear the list's dot and the badge without a refetch
   useEffect(() => {
-    if (m.data) void queryClient.invalidateQueries({ queryKey: ['mail'] })
+    if (!m.data || m.data.read) return
+    queryClient.setQueriesData<InfiniteData<MailListPage>>({ queryKey: ['mail'] }, (d) =>
+      d && { ...d, pages: d.pages.map((p) => ({ ...p, messages: p.messages.map((x) => (x.id === id ? { ...x, read: true } : x)) })) },
+    )
+    void queryClient.invalidateQueries({ queryKey: ['mail-unread'] })
   }, [m.data?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -158,43 +174,75 @@ export function MailPage() {
             <Skeleton className="mt-6 h-60" />
           </>
         )}
-        {m.data && (
-          <div className="mx-auto max-w-3xl">
-            <div className="flex items-start gap-3">
-              <Avatar name={m.data.from.name} />
-              <div className="min-w-0 flex-1 text-sm">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-semibold">{m.data.from.name}</span>
-                  <span className="text-muted-foreground">{m.data.from.address}</span>
-                </div>
-                <div className="truncate text-muted-foreground">
-                  To {m.data.to.map((r) => r.name).join(', ')}
-                  {m.data.cc.length > 0 && ` · Cc ${m.data.cc.map((r) => r.name).join(', ')}`}
-                </div>
-              </div>
-              <span className="shrink-0 text-xs text-muted-foreground">{longTime(m.data.time)}</span>
-            </div>
-            {m.data.files.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {m.data.files.map((f) => (
-                  <a
-                    key={f.id}
-                    href={`/api/mail/${encodeURIComponent(id)}/attachments/${encodeURIComponent(f.id)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex max-w-64 items-center gap-2 rounded-lg bg-card px-3 py-2 text-sm hover:bg-accent"
-                  >
-                    <Paperclip className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{f.name}</span>
-                  </a>
-                ))}
-              </div>
-            )}
-            <div className="tm-msg mt-6 leading-relaxed break-words" dangerouslySetInnerHTML={{ __html: html }} />
-          </div>
-        )}
+        {m.data && <MailView key={id} mail={m.data} />}
       </div>
       {m.data && folder !== 'sent' && <ReplyBox id={id} key={id} />}
+    </div>
+  )
+}
+
+function MailView({ mail }: { mail: Mail }) {
+  const [images, setImages] = useState(false)
+  const [quoted, setQuoted] = useState(false)
+  const [recipients, setRecipients] = useState(false)
+  const body = useMemo(() => mailHtml(mail.html, { images, collapse: !FORWARD.test(mail.subject) }), [mail.html, mail.subject, images])
+  const names = (l: MailAddress[]) => l.map((r) => (recipients && r.address && r.address !== r.name ? `${r.name} <${r.address}>` : r.name)).join(', ')
+
+  return (
+    <div className="mx-auto max-w-3xl">
+      <div className="flex items-start gap-3">
+        <Avatar name={mail.from.name} />
+        <div className="min-w-0 flex-1 text-sm">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="font-semibold">{mail.from.name}</span>
+            <span className="text-muted-foreground">{mail.from.address}</span>
+          </div>
+          <button
+            className={cn('block max-w-full text-left text-muted-foreground hover:text-foreground', recipients ? 'break-words' : 'truncate')}
+            onClick={() => setRecipients(!recipients)}
+            aria-expanded={recipients}
+          >
+            To {names(mail.to)}
+            {mail.cc.length > 0 && (recipients ? <span className="block">Cc {names(mail.cc)}</span> : ` · Cc ${names(mail.cc)}`)}
+          </button>
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">{longTime(mail.time)}</span>
+      </div>
+      {mail.files.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {mail.files.map((f) => (
+            <a
+              key={f.id}
+              href={f.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex max-w-64 items-center gap-2 rounded-lg bg-card px-3 py-2 text-sm hover:bg-accent"
+            >
+              <Paperclip className="size-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">{f.name}</span>
+            </a>
+          ))}
+        </div>
+      )}
+      {body.blocked > 0 && (
+        <button className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground" onClick={() => setImages(true)}>
+          <ImageOff className="size-3.5" /> Show images
+        </button>
+      )}
+      <div className="tm-msg tm-mail mt-6 overflow-x-auto leading-relaxed" dangerouslySetInnerHTML={{ __html: body.main }} />
+      {body.quoted && (
+        <>
+          <button
+            className="mt-3 flex h-4 items-center rounded-full bg-secondary px-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={() => setQuoted(!quoted)}
+            aria-expanded={quoted}
+            aria-label="Earlier mails"
+          >
+            <Ellipsis className="size-4" />
+          </button>
+          {quoted && <div className="tm-msg tm-mail mt-3 overflow-x-auto leading-relaxed" dangerouslySetInnerHTML={{ __html: body.quoted }} />}
+        </>
+      )}
     </div>
   )
 }
@@ -231,38 +279,145 @@ function ReplyBox({ id }: { id: string }) {
   )
 }
 
+function RecipientField({
+  label,
+  list,
+  setList,
+  input,
+  setInput,
+  autoFocus,
+  children,
+}: {
+  label: string
+  list: MailAddress[]
+  setList: (l: MailAddress[]) => void
+  input: string
+  setInput: (v: string) => void
+  autoFocus?: boolean
+  children?: React.ReactNode
+}) {
+  const typed = input.trim()
+  const [term, setTerm] = useState('')
+  const [active, setActive] = useState(0)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setTerm(typed), 250)
+    return () => clearTimeout(t)
+  }, [typed])
+  const wanted = typed.length >= 2 && !typed.includes('@')
+  const people = useQuery({
+    queryKey: ['people', term],
+    queryFn: () => api.mailPeople(term),
+    enabled: wanted && term.length >= 2 && !term.includes('@'),
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  })
+  const options = open && wanted ? (people.data ?? []) : []
+  const fresh = term === typed && !people.isPlaceholderData // the list belongs to what is typed now
+  useEffect(() => setActive(0), [people.data])
+
+  const add = (a: MailAddress) => {
+    if (!list.some((r) => r.address === a.address)) setList([...list, a])
+    setInput('')
+  }
+  const addTyped = () => {
+    const v = typed.replace(/[,;]$/, '')
+    if (EMAIL.test(v)) add({ name: v, address: v })
+  }
+
+  return (
+    <div className="relative">
+      <div className="flex flex-wrap items-center gap-1.5 rounded-md border bg-transparent px-2 py-1.5">
+        <span className="text-sm text-muted-foreground">{label}</span>
+        {list.map((r) => (
+          <span key={r.address} className="flex items-center gap-1 rounded-full bg-secondary py-0.5 pr-1 pl-2.5 text-sm">
+            {r.name}
+            <button onClick={() => setList(list.filter((x) => x !== r))} className="rounded-full p-0.5 hover:bg-white/10" aria-label="Remove">
+              <X className="size-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          value={input}
+          autoFocus={autoFocus}
+          aria-label={label}
+          onChange={(e) => {
+            setInput(e.target.value)
+            setOpen(true)
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && options.length) {
+              e.preventDefault()
+              setActive((active + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length)
+            } else if (['Enter', ',', ';'].includes(e.key) && typed) {
+              e.preventDefault()
+              if (wanted) {
+                if (fresh && options[active]) add(options[active])
+              } else addTyped()
+            } else if (e.key === 'Escape' && options.length) {
+              e.preventDefault()
+              setOpen(false)
+            } else if (e.key === 'Backspace' && !input && list.length) setList(list.slice(0, -1))
+          }}
+          onBlur={() => {
+            addTyped()
+            setOpen(false)
+          }}
+          className="min-w-40 flex-1 bg-transparent py-0.5 text-sm outline-none"
+        />
+        {children}
+      </div>
+      {options.length > 0 && (
+        <div className={cn('absolute top-full z-10 mt-1 w-full overflow-hidden rounded-lg border bg-popover shadow-lg', !fresh && 'opacity-60')}>
+          {options.map((p, i) => (
+            <button
+              key={p.address}
+              tabIndex={-1}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                add(p)
+              }}
+              onMouseEnter={() => setActive(i)}
+              className={cn('flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm', i === active && 'bg-accent')}
+            >
+              <span className="font-medium">{p.name}</span>
+              <span className="truncate text-muted-foreground">{p.address}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Compose() {
   const navigate = useNavigate()
   const { folder } = useSearch({ strict: false }) as MailSearch
   const [to, setTo] = useState<MailAddress[]>([])
-  const [input, setInput] = useState('')
+  const [toInput, setToInput] = useState('')
+  const [cc, setCc] = useState<MailAddress[]>([])
+  const [ccInput, setCcInput] = useState('')
+  const [showCc, setShowCc] = useState(false)
   const [subject, setSubject] = useState('')
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const people = useQuery({
-    queryKey: ['people', input.trim()],
-    queryFn: () => api.mailPeople(input.trim()),
-    enabled: input.trim().length >= 2 && !input.includes('@'),
-    staleTime: 60_000,
-  })
+  const sent = useRef(false)
+  const dirty = !!(to.length || cc.length || toInput.trim() || ccInput.trim() || subject.trim() || text.trim())
+  // leaving (another mail, a folder, the X) would drop what is written: ask first
+  const leave = useBlocker({ shouldBlockFn: () => dirty && !sent.current, enableBeforeUnload: () => dirty && !sent.current, withResolver: true })
   const close = () => void navigate({ to: '/mail', search: fs(folder) })
-  const add = (a: MailAddress) => {
-    if (!to.some((r) => r.address === a.address)) setTo([...to, a])
-    setInput('')
-  }
-  const addTyped = () => {
-    const v = input.trim().replace(/[,;]$/, '')
-    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) add({ name: v, address: v })
-  }
+  const all = (list: MailAddress[], input: string) => [...list.map((r) => r.address), ...(EMAIL.test(input.trim()) ? [input.trim()] : [])]
 
   const send = async () => {
-    const recipients = [...to.map((r) => r.address), ...(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.trim()) ? [input.trim()] : [])]
+    const recipients = all(to, toInput)
     if (!recipients.length || !text.trim()) return
     setBusy(true)
     try {
-      await api.mailSend({ to: recipients, cc: [], subject, text: text.trim() })
+      await api.mailSend({ to: recipients, cc: all(cc, ccInput), subject, text: text.trim() })
       toast('Sent')
       void queryClient.invalidateQueries({ queryKey: ['mail'] })
+      sent.current = true
       close()
     } catch (e) {
       toast.error(errorText(e))
@@ -279,59 +434,37 @@ function Compose() {
         </button>
       </header>
       <div className="tm-scroll mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-2 overflow-y-auto p-3 md:p-6">
-        <div className="relative">
-          <div className="flex flex-wrap items-center gap-1.5 rounded-md border bg-transparent px-2 py-1.5">
-            <span className="text-sm text-muted-foreground">To</span>
-            {to.map((r) => (
-              <span key={r.address} className="flex items-center gap-1 rounded-full bg-secondary py-0.5 pr-1 pl-2.5 text-sm">
-                {r.name}
-                <button onClick={() => setTo(to.filter((x) => x !== r))} className="rounded-full p-0.5 hover:bg-white/10" aria-label="Remove">
-                  <X className="size-3" />
-                </button>
-              </span>
-            ))}
-            <input
-              value={input}
-              autoFocus
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (['Enter', ',', ';', 'Tab'].includes(e.key) && input.trim()) {
-                  e.preventDefault()
-                  if (people.data?.[0] && !input.includes('@')) add(people.data[0])
-                  else addTyped()
-                }
-                if (e.key === 'Backspace' && !input && to.length) setTo(to.slice(0, -1))
-              }}
-              onBlur={addTyped}
-              className="min-w-40 flex-1 bg-transparent py-0.5 text-sm outline-none"
-            />
-          </div>
-          {!!people.data?.length && input.trim().length >= 2 && (
-            <div className="absolute top-full z-10 mt-1 w-full overflow-hidden rounded-lg border bg-popover shadow-lg">
-              {people.data.map((p) => (
-                <button
-                  key={p.address}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    add(p)
-                  }}
-                  className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
-                >
-                  <span className="font-medium">{p.name}</span>
-                  <span className="truncate text-muted-foreground">{p.address}</span>
-                </button>
-              ))}
-            </div>
+        <RecipientField label="To" list={to} setList={setTo} input={toInput} setInput={setToInput} autoFocus>
+          {!showCc && (
+            <button className="rounded px-1.5 text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowCc(true)}>
+              Cc
+            </button>
           )}
-        </div>
+        </RecipientField>
+        {showCc && <RecipientField label="Cc" list={cc} setList={setCc} input={ccInput} setInput={setCcInput} autoFocus />}
         <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" />
         <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Message" className="min-h-60 flex-1 resize-none" />
         <div className="flex justify-end">
-          <Button disabled={busy || (!to.length && !input.includes('@')) || !text.trim()} onClick={() => void send()}>
+          <Button disabled={busy || !all(to, toInput).length || !text.trim()} onClick={() => void send()}>
             {busy ? <Loader2 className="animate-spin" /> : <SendHorizontal />} Send
           </Button>
         </div>
       </div>
+      {leave.status === 'blocked' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={leave.reset}>
+          <div className="w-full max-w-xs rounded-xl border bg-popover p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <p className="font-semibold">Discard this mail?</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={leave.reset}>
+                Keep
+              </Button>
+              <Button variant="destructive" size="sm" autoFocus onClick={leave.proceed}>
+                Discard
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -70,6 +70,7 @@ export const api = {
   mailList: (folder: string, q: string, cursor?: string) =>
     request<MailPage>(`/api/mail?folder=${folder}${q ? `&q=${enc(q)}` : ''}${cursor ? `&cursor=${enc(cursor)}` : ''}`),
   mail: (id: string) => request<Mail>(`/api/mail/${enc(id)}`),
+  mailUnread: () => request<{ count: number }>('/api/mail/unread'),
   mailPeople: (q: string) => request<MailAddress[]>(`/api/mail/people?q=${enc(q)}`),
   mailSend: (m: { to: string[]; cc: string[]; subject: string; text: string }) => post('/api/mail/send', m),
   mailReply: (id: string, text: string, all: boolean) => post(`/api/mail/${enc(id)}/reply`, { text, all }),

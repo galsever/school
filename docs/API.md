@@ -25,6 +25,8 @@ Types: `web/src/lib/types.ts`.
 | GET | `/api/mail?folder=inbox\|sent\|archive&q=&cursor=` | `{messages, cursor}` newest first; `q` searches |
 | GET | `/api/mail/{id}` | mail with sanitizable HTML (inline images rewritten to the attachment route), attachments; marks it read |
 | GET | `/api/mail/{id}/attachments/{aid}` | the attachment (images, PDF inline, rest as download) |
+| GET | `/api/mail/{id}/attachments/{aid}/parts/{n}` | a file from inside an S/MIME signed mail (Graph hands those over as one `smime.p7m`); `files[].url` and inline images point here |
+| GET | `/api/mail/unread` | `{count}` unread in the inbox |
 | POST | `/api/mail/send` | `{to[], cc[], subject, text}` |
 | POST | `/api/mail/{id}/reply` | `{text, all}` |
 | GET | `/api/mail/people?q=` | address suggestions |

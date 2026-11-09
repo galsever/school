@@ -106,5 +106,5 @@ export type MailFolder = 'inbox' | 'sent' | 'archive'
 export type Mail = MailSummary & {
   cc: MailAddress[]
   html: string
-  files: { id: string; name: string; size: number | null; type: string }[]
+  files: { id: string; name: string; size: number | null; type: string; url: string }[]
 }

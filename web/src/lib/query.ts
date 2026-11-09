@@ -5,7 +5,7 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30_000,
-      retry: (n, e) => !(e instanceof ApiError && [401, 404, 409].includes(e.status)) && n < 2,
+      retry: (n, e) => !(e instanceof ApiError && [400, 401, 404, 409].includes(e.status)) && n < 2,
     },
   },
 })
@@ -27,7 +27,10 @@ export const q = {
       initialPageParam: '',
       getNextPageParam: (last) => last.cursor ?? undefined,
       refetchInterval: 60_000,
+      // searching keeps the list on screen until the result is there (not across folders)
+      placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === folder ? prev : undefined),
     }),
+  mailUnread: () => queryOptions({ queryKey: ['mail-unread'], queryFn: api.mailUnread, refetchInterval: 60_000 }),
   mail: (id: string) => queryOptions({ queryKey: ['mail-item', id], queryFn: () => api.mail(id), staleTime: 5 * 60_000 }),
   assignments: () => queryOptions({ queryKey: ['assignments'], queryFn: api.assignments, staleTime: 5 * 60_000 }),
   assignment: (classId: string, id: string) =>

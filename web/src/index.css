@@ -93,9 +93,10 @@
   scrollbar-color: oklch(1 0 0 / 18%) transparent;
 }
 
-/* Message bodies from Teams (sanitized HTML) */
+/* Message bodies from Teams and mail (sanitized HTML) */
+.tm-msg { overflow-wrap: break-word; }
 .tm-msg p { margin: 0; }
-.tm-msg a { color: var(--primary); text-decoration: underline; word-break: break-all; }
+.tm-msg a { color: var(--primary); text-decoration: underline; }
 .tm-msg img { max-width: 100%; max-height: 320px; border-radius: 0.5rem; cursor: zoom-in; }
 .tm-msg ul { list-style: disc; padding-left: 1.25rem; }
 .tm-msg ol { list-style: decimal; padding-left: 1.25rem; }
@@ -103,4 +104,8 @@
 .tm-msg pre, .tm-msg code { font-family: ui-monospace, monospace; font-size: 0.85em; background: var(--muted); border-radius: 0.25rem; padding: 0.1rem 0.3rem; }
 .tm-msg pre { padding: 0.5rem 0.75rem; overflow-x: auto; white-space: pre-wrap; }
 .tm-msg table { border-collapse: collapse; }
-.tm-msg td, .tm-msg th { border: 1px solid var(--border); padding: 0.25rem 0.5rem; }
+.tm-msg:not(.tm-mail) :is(td, th) { border: 1px solid var(--border); padding: 0.25rem 0.5rem; }
+/* Mail: most tables are layout, only a table that asks for a border gets cell borders */
+.tm-mail table { max-width: 100%; }
+.tm-mail table[border]:not([border="0"]) > * > tr > :is(td, th) { border: 1px solid var(--border); padding: 0.25rem 0.5rem; }
+.tm-mail img { height: auto; max-height: none; border-radius: 0; }
