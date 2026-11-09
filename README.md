@@ -15,7 +15,7 @@ Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tai
 | Assignments | all assignments by due date, instructions, material, own work: upload, turn in, undo |
 | Mail | school Outlook: inbox, sent, archive, search, conversations shown like a chat, mails in their own look (darkened), reply, reply all, forward and new mail with formatting and attachments. Details: [docs/MAIL.md](docs/MAIL.md) |
 | Absences | WebUntis absences with own reasons per day, the Entschuldigung PDF, attendance per subject. Details: [docs/ABSENCES.md](docs/ABSENCES.md) |
-| Moodle | courses with their files (one click opens a file), search over all courses, assignments with upload and submit, grades |
+| Moodle | courses shaped like Moodle (files open in one click), search over all courses, assignments with hand-in, grades, choices with voting, publications with upload. Details: [docs/MOODLE.md](docs/MOODLE.md) |
 | Settings | Microsoft account, WebUntis login, Moodle login, notifications |
 
 **Own names and hiding (Teams tab).** Right click a team or channel (long press on the phone): *Rename* gives it your own display name, *Hide* moves it into the folded *Hidden* group at the bottom of the list (*Show* brings it back).
@@ -34,7 +34,7 @@ Everything the app keeps is in the `data` volume (`/data`):
 | `untis.json` | WebUntis login (0600) |
 | `absences.db` | SQLite: the raw WebUntis pull, own reasons per day, subject groups |
 | `moodle.json`, `moodle-token.json` | Moodle login (0600) and the web service token it got |
-| `moodle-uploads/` | files on their way into a Moodle submission, removed after an hour |
+| `moodle-uploads/` | files on their way into a Moodle submission or publication, removed after an hour |
 | `mcp-token` | bearer token of the MCP endpoint |
 | `session-secret`, `app-password` | only used with `APP_AUTH=password` |
 
@@ -54,27 +54,7 @@ The login (server, school, user, password, place for the letter) is entered once
 
 ## Moodle
 
-The login (user, password) is entered once under Settings and checked once at Moodle before it is stored
-(`/data/moodle.json`, 0600). The server talks to the mobile app web service (`moodle_mobile_app`) with a token it gets
-from that login; a rejected login blocks every call until the login is changed, so a typo cannot lock the account.
-
-- **Fast by design.** Every read is cached for 60 s on the server, the same read running twice is sent once, and the
-  browser keeps the last answer (localStorage), so the tab paints at once and refreshes in the background. Opening
-  the tab reads every course, so a course opens without waiting and the search covers all files. The reload button
-  empties the server cache.
-- **Two screens, shaped like Moodle but simpler.** The course list (with what is open on top and a search over all
-  courses) and one course: Course or Grades. A course shows what is open in it, then its sections as folding cards
-  in Moodle's own order with the teacher's text in full. An assignment row shows its grade, else a check when
-  handed in, else when it is due. An assignment opens next to its course: task, material, own work with drag and
-  drop, submit, feedback.
-- **Hand-in.** Moodle replaces the whole submission on every save, so the server copies the files already there into
-  the new draft and sends the current online text along. Assignments with a submit button stay a draft until Submit.
-- **Choices and publications** open inside their course: a choice shows Moodle's responses (one column per option
-  with count, limit and names, your pick marked) and lets you pick with Save while it is open; a publication lists
-  your files and everybody's published files. Publication has no app API, so the server reads it from the Moodle
-  website with a session logged in with the stored password (memory only).
-- Files and embedded images are streamed through the server (`/api/moodle/file`), because they need the token; only
-  addresses on the Moodle itself are fetched, and the token is blanked in the request log.
+Courses, files, assignments with hand-in, grades, choices and publications, through the Moodle app's web service with the login from Settings (publications through the website, they have no API). Everything about it: [docs/MOODLE.md](docs/MOODLE.md).
 
 ## How it runs
 
