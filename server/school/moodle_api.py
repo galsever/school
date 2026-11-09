@@ -423,6 +423,8 @@ async def course_contents_tool(course_id: int, section: str = "") -> str:
                         "dates": [f"{d['label']} {_date(d['time'])}" for d in m["dates"]],
                         "restricted": _clip(m["restricted"] or "", 300),
                         "done": m["done"],
+                        "submission": m["status"],
+                        "grade": m["grade"],
                         "link": m["link"],
                         "files": [_file_out(f) for f in m["files"]],
                     }

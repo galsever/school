@@ -36,10 +36,12 @@ export type MoodleModule = {
   link: string | null
   done: boolean
   restricted: string | null
+  /** assignments only: own submission (none, draft, submitted, reopened) and grade */
+  status: string | null
+  grade: string | null
   dates: { id: string; label: string; time: string | null }[]
 }
 export type MoodleSection = { id: number; number: number; name: string; summary: string; modules: MoodleModule[] }
-export type MoodleCourseContent = { id: number; name: string; sections: MoodleSection[] }
 export type MoodleGrade = {
   name: string
   type: string
@@ -52,6 +54,8 @@ export type MoodleGrade = {
   feedback: string
   gradedAt: string | null
 }
+/** total: the course total when graded; grades: graded items that are not an assignment row */
+export type MoodleCourseContent = { id: number; name: string; total: string | null; grades: MoodleGrade[]; sections: MoodleSection[] }
 export type MoodleSubmission = {
   status: 'none' | 'draft' | 'submitted' | 'reopened' | string
   grading: string
@@ -95,7 +99,6 @@ export const moodleApi = {
   /** Empties the server's short cache: the next reads ask Moodle again. */
   refresh: () => post(`${base}/refresh`),
   course: (id: number) => request<MoodleCourseContent>(`${base}/courses/${id}`),
-  grades: (id: number) => request<MoodleGrade[]>(`${base}/courses/${id}/grades`),
   assignment: (cmid: number, course: number) => request<MoodleAssignment>(`${base}/assignments/${cmid}?course=${course}`),
   page: (url: string) => request<{ html: string }>(`${base}/page?url=${enc(url)}`),
   upload: (file: File) =>
@@ -113,7 +116,7 @@ export const moodleApi = {
 
 // The last answer of the slow-changing reads stays in the browser, so the tab paints at once after a reload
 // and the fresh data replaces it in the background.
-const KEEP = 'moodle:'
+const KEEP = 'moodle:2:'
 
 function kept<T>(key: string): { initialData?: T; initialDataUpdatedAt?: number } {
   try {
@@ -138,7 +141,7 @@ async function keep<T>(key: string, load: () => Promise<T>): Promise<T> {
 
 /** Forgets what the browser kept (the Moodle login changed). */
 export function forgetMoodle() {
-  for (const k of Object.keys(localStorage)) if (k.startsWith(KEEP)) localStorage.removeItem(k)
+  for (const k of Object.keys(localStorage)) if (k.startsWith('moodle:')) localStorage.removeItem(k)
 }
 
 const STALE = 60_000
@@ -152,13 +155,6 @@ export const moodleQ = {
       queryFn: () => keep(`course:${id}`, () => moodleApi.course(id)),
       staleTime: STALE,
       ...kept<MoodleCourseContent>(`course:${id}`),
-    }),
-  grades: (id: number) =>
-    queryOptions({
-      queryKey: ['moodle', 'grades', id],
-      queryFn: () => keep(`grades:${id}`, () => moodleApi.grades(id)),
-      staleTime: STALE,
-      ...kept<MoodleGrade[]>(`grades:${id}`),
     }),
   assignment: (cmid: number, course: number) =>
     queryOptions({ queryKey: ['moodle', 'assignment', cmid], queryFn: () => moodleApi.assignment(cmid, course), staleTime: STALE }),

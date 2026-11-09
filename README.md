@@ -62,8 +62,11 @@ from that login; a rejected login blocks every call until the login is changed, 
   browser keeps the last answer (localStorage), so the tab paints at once and refreshes in the background. Opening
   the tab reads every course, so a course opens without waiting and the search covers all files. The reload button
   empties the server cache.
-- **Two screens.** The course list (with what is due on top and a search over all courses) and one course (content or
-  grades). An assignment opens next to its course: task, material, own work with drag and drop, submit, feedback.
+- **Two screens.** The course list (with what is open on top and a search over all courses) and one course: what is
+  open in it, then its sections newest first (the general section last), then graded items that are not an
+  assignment. An assignment row shows its grade, else a check when handed in, else when it is due. Teacher text shows
+  two lines until clicked, folders start closed. An assignment opens next to its course: task, material, own work
+  with drag and drop, submit, feedback.
 - **Hand-in.** Moodle replaces the whole submission on every save, so the server copies the files already there into
   the new draft and sends the current online text along. Assignments with a submit button stay a draft until Submit.
 - Files and embedded images are streamed through the server (`/api/moodle/file`), because they need the token; only

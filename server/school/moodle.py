@@ -533,8 +533,8 @@ async def course_grades() -> dict[int, str]:
 
 
 async def home() -> dict:
-    """The Moodle tab: what is due and the courses with their grade."""
-    cs, grades, due = await asyncio.gather(courses(), course_grades(), deadlines(30, 30))
+    """The Moodle tab: what is open (due within half a year, or overdue for a month) and the courses with their grade."""
+    cs, grades, due = await asyncio.gather(courses(), course_grades(), deadlines(180, 30))
     for c in cs:
         grade = grades.get(c["id"], "").strip()
         c["grade"] = grade if grade not in ("", "-") else None
@@ -556,6 +556,9 @@ def _module(m: dict) -> dict | None:
         "link": None,
         "done": (m.get("completiondata") or {}).get("state", 0) > 0,
         "restricted": None if visible else (html_text(m.get("availabilityinfo")) or "Not available"),
+        # assignments only, filled in by course(): own submission status (none, draft, submitted, reopened) and grade
+        "status": None,
+        "grade": None,
         # id says which date it is (duedate, allowsubmissionsfromdate, timeopen, timeclose, ...); the label is localized
         "dates": [{"id": d.get("dataid") or "", "label": plain(d.get("label")).rstrip(":"), "time": iso(d.get("timestamp"))} for d in m.get("dates") or []],
     }
@@ -567,9 +570,25 @@ def _module(m: dict) -> dict | None:
     return out
 
 
+async def _or(coro, default):
+    """The result, or default when Moodle refuses this one read (a missing login still raises)."""
+    try:
+        return await coro
+    except MoodleError as e:
+        if e.not_connected:
+            raise
+        return default
+
+
 async def course(course_id: int) -> dict:
-    """Sections and activities of one course with their files."""
-    sections, cs = await asyncio.gather(cached("core_course_get_contents", {"courseid": course_id}), _courses_raw())
+    """Sections and activities of one course with their files; assignments carry the own status and grade.
+
+    `grades` lists the graded items that are not an assignment row (those show their grade on the row), `total` is
+    the course total when there is one.
+    """
+    sections, cs, items = await asyncio.gather(
+        cached("core_course_get_contents", {"courseid": course_id}), _courses_raw(), _or(grade_items(course_id), [])
+    )
     name = next((plain(c.get("fullname")) for c in cs if c["id"] == course_id), "")
     out = []
     for s in sections:
@@ -578,7 +597,25 @@ async def course(course_id: int) -> dict:
         if not modules and not html_text(summary):
             continue
         out.append({"id": s["id"], "number": s.get("section", 0), "name": plain(s.get("name")), "summary": summary, "modules": modules})
-    return {"id": course_id, "name": name, "sections": out}
+
+    graded = [g for g in items if g["grade"] != "-"]
+    by_cmid = {g["cmid"]: g["grade"] for g in graded if g["cmid"]}
+    assigns = [m for s in out for m in s["modules"] if m["type"] == "assign" and not m["restricted"] and m["instance"]]
+    states = await asyncio.gather(
+        *(_or(cached("mod_assign_get_submission_status", {"assignid": m["instance"]}), {}) for m in assigns)
+    )
+    for m, state in zip(assigns, states):
+        status = _plugins(state)[0]
+        m["status"] = status if status not in ("", "new") else "none"
+        m["grade"] = by_cmid.get(m["cmid"])
+    shown = {m["cmid"] for m in assigns}
+    return {
+        "id": course_id,
+        "name": name,
+        "total": next((g["grade"] for g in graded if g["type"] == "course"), None),
+        "grades": [g for g in graded if g["type"] != "course" and g["cmid"] not in shown],
+        "sections": out,
+    }
 
 
 async def grade_items(course_id: int) -> list[dict]:

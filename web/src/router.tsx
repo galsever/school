@@ -139,12 +139,8 @@ const moodleCourseRoute = createRoute({
   getParentRoute: () => moodleRoute,
   path: '$courseId',
   // a: the open assignment (cmid)
-  validateSearch: (s: Record<string, unknown>): { a?: number; tab?: 'grades' } => {
-    const out: { a?: number; tab?: 'grades' } = {}
-    if (Number.isInteger(Number(s.a)) && Number(s.a) > 0) out.a = Number(s.a)
-    if (s.tab === 'grades') out.tab = 'grades'
-    return out
-  },
+  validateSearch: (s: Record<string, unknown>): { a?: number } =>
+    Number.isInteger(Number(s.a)) && Number(s.a) > 0 ? { a: Number(s.a) } : {},
   component: lazyRouteComponent(() => import('@/routes/moodle'), 'CoursePage'),
 })
 

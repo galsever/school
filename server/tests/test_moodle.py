@@ -276,13 +276,28 @@ def test_course_shape(fake):
             {"id": 11, "name": "Hidden", "modname": "page", "uservisible": False},
             {"id": 12, "name": "Later", "modname": "assign", "uservisible": False, "availabilityinfo": "<b>Not yet</b>"},
             {"id": 13, "name": "Site", "modname": "url", "uservisible": True, "contents": [{"type": "url", "fileurl": "https://x.test/"}]},
+            {"id": 14, "name": "Essay", "modname": "assign", "instance": 40, "uservisible": True},
+            {"id": 15, "name": "Lab", "modname": "assign", "instance": 41, "uservisible": True},
         ]},
         {"id": 2, "section": 1, "name": "Empty", "summary": "<p> </p>", "modules": []},
     ]
+    fake.answers["gradereport_user_get_grade_items"] = {"usergrades": [{"gradeitems": [
+        {"itemname": "Essay", "itemtype": "mod", "itemmodule": "assign", "cmid": 14, "gradeformatted": "2"},
+        {"itemname": "Lab", "itemtype": "mod", "itemmodule": "assign", "cmid": 15, "gradeformatted": "-"},
+        {"itemname": "Test 1", "itemtype": "manual", "gradeformatted": "3", "rangeformatted": "1&ndash;5"},
+        {"itemname": "Hidden", "itemtype": "manual", "gradeformatted": "5", "gradeishidden": True},
+        {"itemname": None, "itemtype": "course", "gradeformatted": "2,5"},
+    ]}]}
+    fake.answers["mod_assign_get_submission_status"] = _status(state="submitted")
     c = run(md.course(2))
     assert c["name"] == "Deutsch & Co" and len(c["sections"]) == 1
     mods = c["sections"][0]["modules"]
-    assert [m["cmid"] for m in mods] == [10, 12, 13]
+    assert [m["cmid"] for m in mods] == [10, 12, 13, 14, 15]
+    # assignments carry status and grade; a restricted one is not asked about
+    assert (mods[3]["status"], mods[3]["grade"]) == ("submitted", "2") and (mods[4]["status"], mods[4]["grade"]) == ("submitted", None)
+    assert mods[1]["status"] is None and len([c for c in fake.calls if c[0] == "mod_assign_get_submission_status"]) == 2
+    # the grade list keeps only graded items that are not on an assignment row; the course total stands alone
+    assert c["total"] == "2,5" and [(g["name"], g["grade"], g["range"]) for g in c["grades"]] == [("Test 1", "3", "1\u20135")]
     assert mods[0]["done"] and mods[0]["files"][0]["name"] == "s.pdf" and mods[0]["files"][0]["view"].startswith("/api/moodle/file?url=https%3A")
     assert mods[1]["restricted"] == "Not yet" and mods[2]["link"] == "https://x.test/"
 
