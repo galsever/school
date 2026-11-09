@@ -14,7 +14,7 @@ Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tai
 | Teams | class teams with their channels, posts and files (Office files open as PDF), class assignments next to the main channel |
 | Assignments | all assignments by due date, instructions, material, own work: upload, turn in, undo |
 | Mail | school Outlook: inbox, sent, archive, search, read, attachments, reply, new mail. Details: [docs/MAIL.md](docs/MAIL.md) |
-| Absences | WebUntis absences with own reasons per day, the Entschuldigung PDF, attendance per subject |
+| Absences | WebUntis absences with own reasons per day, the Entschuldigung PDF, attendance per subject. Details: [docs/ABSENCES.md](docs/ABSENCES.md) |
 | Moodle | courses with their files (one click opens a file), search over all courses, assignments with upload and submit, grades |
 | Settings | Microsoft account, WebUntis login, Moodle login, notifications |
 
@@ -50,7 +50,7 @@ Once, in the app under `/connect`: a device code you enter on microsoft.com/devi
 
 ## WebUntis
 
-The login (server, school, user, password, place for the letter) is entered once under Settings and checked once at WebUntis before it is stored (`/data/untis.json`, 0600). Each sync is one login, the whole school year, and a logout; data older than 30 minutes is pulled when the Absences page or an MCP tool asks. A rejected login blocks all syncing until the login is changed: the school locks accounts, so nothing retries. The raw pull, the own reasons per day and the subject groups live in `/data/absences.db` (SQLite).
+The login (server, school, user, password, place for the letter) is entered once under Settings and checked once at WebUntis before it is stored (`/data/untis.json`, 0600). School is the WebUntis login name (`spengergasse`); the real name or an empty field is looked up. Each sync is one login, the whole school year, and a logout; data older than 30 minutes is pulled when the Absences page or an MCP tool asks. A rejected login blocks all syncing until the login is changed: the school locks accounts, so nothing retries. The raw pull, the own reasons per day and the subject groups live in `/data/absences.db` (SQLite). How a pull works, how days and attendance are counted, the letter, the MCP tools and how to test without WebUntis: [docs/ABSENCES.md](docs/ABSENCES.md).
 
 ## Moodle
 

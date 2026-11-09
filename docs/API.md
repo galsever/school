@@ -84,6 +84,11 @@ Team and channel: `{id, name, original, hidden}`.
 
 Own login for WebUntis (`/data/untis.json`), checked once at WebUntis before it is stored. A rejected login blocks all
 syncing until the login is changed: schools lock accounts, so nothing retries. Times are minutes since midnight.
+Background and rules: [ABSENCES.md](ABSENCES.md).
+
+`sync` = `{configured, lastSync, lastError, blocked, stale}`. An absence entry = `{id, date, start, end, excused, status,
+untisReason, late, lateMinutes, units}`. Errors of this area: `400 bad_request`, `400 letter` (a day without a reason, detail
+names the days), `400 untis_login` (detail says why: rejected, school not found, not reachable), `403 forbidden` (PDF link).
 
 | Route | What |
 |---|---|
@@ -93,7 +98,7 @@ syncing until the login is changed: schools lock accounts, so nothing retries. T
 | `POST /api/absences/letter` | `{dates}` -> the Entschuldigung PDF; every day needs a reason; marks the days exported |
 | `GET /api/absences/attendance?range=s1,s2,year` or `from=&to=` | `{range, total, subjects, groups, allSubjects}`, per subject `held, present, excused, unexcused, percent` |
 | `POST /api/absences/groups`, `DELETE /api/absences/groups/{name}` | subjects counted as one (`{name, subjects}`) |
-| `GET/POST /api/absences/login` | WebUntis login `{server, school, user, password, place}`; the password is never returned, empty keeps it |
+| `GET/POST /api/absences/login` | WebUntis login `{server, school, user, password, place}`; the password is never returned, empty keeps it; `server` may be a pasted login URL; `school` is the login name, the real name or empty is looked up; POST does one login at WebUntis when the login changed |
 | `GET /api/mcp/pdf?dates=&exp=&sig=` | signed 15 min link from the MCP tool `excuse_pdf`, no login |
 
 ## Moodle
