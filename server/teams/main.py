@@ -166,6 +166,45 @@ async def assignment(class_id: str, aid: str):
     return await upstream.assignment(class_id, aid)
 
 
+MAX_UPLOAD = 250 * 1024 * 1024
+
+
+@app.post("/api/assignments/{class_id}/{aid}/files", dependencies=guard)
+async def upload(class_id: str, aid: str, request: Request, name: str):
+    """Raw file body; name in the query. Streams into a Graph upload session."""
+    size = int(request.headers.get("content-length") or 0)
+    name = name.strip().replace("/", "_").replace("\\", "_")[:200]
+    if not name or not 0 < size <= MAX_UPLOAD:
+        raise HTTPException(400, {"error": "bad_file", "detail": "Empty, too big or no name"})
+    return await upstream.upload(class_id, aid, name, size, request.stream())
+
+
+@app.delete("/api/assignments/{class_id}/{aid}/files/{rid}", dependencies=guard)
+async def remove_file(class_id: str, aid: str, rid: str):
+    await upstream.remove_file(class_id, aid, rid)
+    return Response(status_code=204)
+
+
+@app.post("/api/assignments/{class_id}/{aid}/turn-in", dependencies=guard)
+async def turn_in(class_id: str, aid: str):
+    await upstream.turn_in(class_id, aid)
+    return Response(status_code=204)
+
+
+@app.post("/api/assignments/{class_id}/{aid}/undo-turn-in", dependencies=guard)
+async def undo_turn_in(class_id: str, aid: str):
+    await upstream.turn_in(class_id, aid, undo=True)
+    return Response(status_code=204)
+
+
+@app.get("/api/files/open", dependencies=guard)
+async def open_file(url: str):
+    """Assignment files are Graph drive item URLs; send the browser to the SharePoint page."""
+    if not url.startswith(upstream.GRAPH_URL + "/drives/"):
+        raise HTTPException(400, {"error": "bad_url", "detail": "Not a drive item"})
+    return RedirectResponse(await upstream.file_web_url(url), status_code=302)
+
+
 # ---- website -----------------------------------------------------------------
 
 @app.get("/{path:path}", include_in_schema=False)

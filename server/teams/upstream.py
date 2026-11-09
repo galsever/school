@@ -435,14 +435,115 @@ async def assignment(class_id: str, aid: str) -> dict:
                 None,
             ),
         }
+        out["canEdit"] = sub.get("status") in ("working", "reassigned") and bool(
+            a.get("allowStudentsToAddResourcesToSubmission", True)
+        )
+        out["canUndo"] = sub.get("status") == "submitted" and bool(a.get("allowStudentsToUndoTurnIn", True))
+        out["lateAllowed"] = bool(a.get("allowLateSubmissions", True))
     return out
 
 
+# ---- turning in ------------------------------------------------------------------
+
+FILE_RESOURCE = "#microsoft.education.assignments.api.educationFileResource"
+CHUNK = 5 * 1024 * 1024  # multiple of 320 KiB, as Graph upload sessions require
+
+
+async def _edu(method: str, path: str, **kw):
+    tok = await session.token(GRAPH)
+    r = await session.http.request(method, ASSIGNMENTS + path, headers={"Authorization": f"Bearer {tok}"}, **kw)
+    return _check(r)
+
+
+async def _my_submission(class_id: str, aid: str) -> dict:
+    subs = (await _edu("GET", f"/classes/{class_id}/assignments/{aid}/submissions")).json().get("value") or []
+    if not subs:
+        raise Upstream(404, "no submission")
+    return subs[0]
+
+
+async def upload(class_id: str, aid: str, name: str, size: int, chunks) -> dict:
+    """Uploads a file into the submission folder (Graph upload session) and attaches it to the submission."""
+    sub = await _my_submission(class_id, aid)
+    base = f"/classes/{class_id}/assignments/{aid}/submissions/{sub['id']}"
+    folder = sub.get("resourcesFolderUrl")
+    if not folder:
+        await _edu("POST", base + "/setUpResourcesFolder", json={})
+        folder = (await _my_submission(class_id, aid)).get("resourcesFolderUrl")
+    if not folder or not folder.startswith(GRAPH_URL + "/drives/"):
+        raise Upstream(502, "no submission folder")
+    tok = await session.token(GRAPH)
+    from urllib.parse import quote
+
+    r = await session.http.post(
+        f"{folder}:/{quote(name)}:/createUploadSession",
+        json={"item": {"@microsoft.graph.conflictBehavior": "rename"}},
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    upload_url = _check(r).json()["uploadUrl"]
+    item, sent, buf = None, 0, b""
+
+    async def put(data: bytes, start: int):
+        res = await session.http.put(
+            upload_url,
+            content=data,
+            headers={"Content-Range": f"bytes {start}-{start + len(data) - 1}/{size}"},
+            timeout=120,
+        )
+        return _check(res)
+
+    async for part in chunks:
+        buf += part
+        while len(buf) >= CHUNK and sent + CHUNK < size:
+            await put(buf[:CHUNK], sent)
+            sent += CHUNK
+            buf = buf[CHUNK:]
+    if sent + len(buf) != size:
+        await session.http.delete(upload_url)
+        raise Upstream(400, "size mismatch")
+    item = (await put(buf, sent)).json()
+    drive = item["parentReference"]["driveId"]
+    res = await _edu(
+        "POST",
+        base + "/resources",
+        json={
+            "resource": {
+                "@odata.type": FILE_RESOURCE,
+                "displayName": item["name"],
+                "fileUrl": f"{GRAPH_URL}/drives/{drive}/items/{item['id']}",
+            }
+        },
+    )
+    return _resource(res.json())
+
+
+async def remove_file(class_id: str, aid: str, rid: str) -> None:
+    sub = await _my_submission(class_id, aid)
+    await _edu("DELETE", f"/classes/{class_id}/assignments/{aid}/submissions/{sub['id']}/resources/{rid}")
+
+
+async def turn_in(class_id: str, aid: str, undo: bool = False) -> None:
+    sub = await _my_submission(class_id, aid)
+    await _edu("POST", f"/classes/{class_id}/assignments/{aid}/submissions/{sub['id']}/{'unsubmit' if undo else 'submit'}")
+
+
+async def file_web_url(graph_url: str) -> str:
+    """Graph drive item URL (how assignment files are stored) -> its SharePoint web URL."""
+    tok = await session.token(GRAPH)
+    r = await session.http.get(graph_url + "?$select=webUrl", headers={"Authorization": f"Bearer {tok}"})
+    return _check(r).json()["webUrl"]
+
+
 def _resource(r: dict) -> dict:
+    from urllib.parse import quote
+
     res = r.get("resource") or {}
+    url = res.get("link") or res.get("fileUrl") or r.get("webUrl") or None
+    if url and url.startswith(GRAPH_URL + "/drives/"):
+        url = "/api/files/open?url=" + quote(url, safe="")  # Graph item: opened through our redirect
     return {
         "id": r.get("id"),
         "name": res.get("displayName", ""),
         "kind": (res.get("@odata.type") or "").rsplit(".", 1)[-1],
-        "url": res.get("link") or res.get("fileUrl") or r.get("webUrl") or None,
+        "url": url,
     }

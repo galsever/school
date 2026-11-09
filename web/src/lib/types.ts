@@ -60,6 +60,9 @@ export type Assignment = {
 }
 
 export type AssignmentDetail = Assignment & {
+  canEdit?: boolean
+  canUndo?: boolean
+  lateAllowed?: boolean
   instructions: string
   resources: Resource[]
   submission?: {

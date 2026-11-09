@@ -1,4 +1,4 @@
-import type { Assignment, AssignmentDetail, Chat, DeviceLogin, MessagePage, MsStatus, Team } from './types'
+import type { Assignment, AssignmentDetail, Chat, DeviceLogin, MessagePage, MsStatus, Resource, Team } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -69,6 +69,16 @@ export const api = {
   teams: () => request<Team[]>('/api/teams'),
   assignments: () => request<Assignment[]>('/api/assignments'),
   assignment: (classId: string, id: string) => request<AssignmentDetail>(`/api/assignments/${enc(classId)}/${enc(id)}`),
+  uploadWork: (classId: string, id: string, file: File) =>
+    request<Resource>(`/api/assignments/${enc(classId)}/${enc(id)}/files?name=${enc(file.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    }),
+  removeWork: (classId: string, id: string, rid: string) =>
+    request<void>(`/api/assignments/${enc(classId)}/${enc(id)}/files/${enc(rid)}`, { method: 'DELETE' }),
+  turnIn: (classId: string, id: string) => post(`/api/assignments/${enc(classId)}/${enc(id)}/turn-in`),
+  undoTurnIn: (classId: string, id: string) => post(`/api/assignments/${enc(classId)}/${enc(id)}/undo-turn-in`),
 }
 
 export function errorText(e: unknown): string {
