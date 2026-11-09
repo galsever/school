@@ -63,11 +63,16 @@ export function MoodleLayout() {
   )
 }
 
+/** The course opened last in this browser (Moodle's own last access does not change when the hub reads a course). */
+const LAST = 'moodle:last'
+
 /** No course picked: on a wide screen the last used course opens by itself, so the tab never starts empty. */
 export function NoCourse() {
   const home = useQuery(moodleQ.home())
   const navigate = useNavigate()
-  const first = home.data?.courses[0]?.id
+  const courses = home.data?.courses
+  const last = Number(localStorage.getItem(LAST))
+  const first = courses?.some((c) => c.id === last) ? last : courses?.[0]?.id
   useEffect(() => {
     if (first != null && matchMedia('(min-width: 768px)').matches) {
       void navigate({ to: '/moodle/$courseId', params: { courseId: String(first) }, replace: true })
@@ -135,13 +140,12 @@ function CourseList({ active, className }: { active: number | null; className?: 
 
   return (
     <aside className={cn('flex min-h-0 flex-col', className)}>
-      <div className="flex h-14 shrink-0 items-center gap-2 px-4">
-        <h1 className="flex-1 text-xl font-semibold">Moodle</h1>
+      <div className="flex shrink-0 items-center gap-1 p-3 pb-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-8" placeholder="Search" aria-label="Search" value={term} onChange={(e) => setTerm(e.target.value)} />
+        </div>
         <ReloadButton />
-      </div>
-      <div className="relative mx-3 mb-2">
-        <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input className="pl-8" placeholder="Search" aria-label="Search" value={term} onChange={(e) => setTerm(e.target.value)} />
       </div>
       <div className="tm-scroll min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
         {home.isError &&
@@ -174,9 +178,9 @@ function CourseList({ active, className }: { active: number | null; className?: 
               key={c.id}
               to="/moodle/$courseId"
               params={{ courseId: String(c.id) }}
-              className={cn('flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-white/5', active === c.id && 'bg-white/10')}
+              className={cn('flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-white/5', active === c.id && 'bg-white/10')}
             >
-              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/15 text-[11px] font-semibold text-primary">{code}</span>
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/15 text-[11px] font-semibold text-primary">{code}</span>
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
               {c.grade && <span className="shrink-0 text-xs text-muted-foreground">{c.grade}</span>}
             </Link>
@@ -283,7 +287,20 @@ export function CoursePage() {
   const course = useQuery(moodleQ.course(id))
   const meta = home.data?.courses.find((c) => c.id === id)
   const { code, title } = courseTitle({ name: course.data?.name || meta?.name || '', short: meta?.short })
-  const open = (cmid?: number) => void navigate({ to: '/moodle/$courseId', params: { courseId }, search: cmid ? { a: cmid } : {}, replace: true })
+  const qc = useQueryClient()
+  // Opening an assignment is its own history step, so Back (and the phone's back gesture) returns to the course.
+  const stepped = useRef(false)
+  const open = (cmid: number) => {
+    if (a == null) stepped.current = true
+    void navigate({ to: '/moodle/$courseId', params: { courseId }, search: { a: cmid }, replace: a != null })
+  }
+  const close = () => {
+    if (stepped.current) {
+      stepped.current = false
+      history.back()
+    } else void navigate({ to: '/moodle/$courseId', params: { courseId }, search: {}, replace: true })
+  }
+  useEffect(() => localStorage.setItem(LAST, String(id)), [id])
   const due = (home.data?.due ?? []).filter((d) => d.courseId === id)
   const total = course.data?.total ?? meta?.grade
 
@@ -311,7 +328,7 @@ export function CoursePage() {
           </a>
         </header>
         <div className="tm-scroll min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-3xl px-2 pb-10 md:px-6">
+          <div className="max-w-3xl px-2 pb-10 md:px-4">
             {course.isError && !course.data && <ErrorView error={course.error} retry={() => void course.refetch()} />}
             {course.isPending && Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="mt-2 h-10 rounded-lg" />)}
             {due.length > 0 && (
@@ -322,7 +339,14 @@ export function CoursePage() {
                 ))}
               </section>
             )}
-            {course.data && <Sections course={course.data} active={a} open={open} />}
+            {course.data && (
+              <Sections
+                course={course.data}
+                active={a}
+                open={open}
+                warm={(cmid) => void qc.prefetchQuery(moodleQ.assignment(cmid, id))}
+              />
+            )}
             {!!course.data?.grades?.length && (
               <section>
                 <SectionHeading>Grades</SectionHeading>
@@ -336,7 +360,7 @@ export function CoursePage() {
       </div>
       {a != null && (
         <aside className="h-full w-full min-w-0 lg:w-[26rem] lg:shrink-0 lg:border-l">
-          <MoodleAssignmentView cmid={a} courseId={id} onClose={() => open()} />
+          <MoodleAssignmentView cmid={a} courseId={id} onClose={close} />
         </aside>
       )}
     </div>
@@ -344,10 +368,20 @@ export function CoursePage() {
 }
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
-  return <h2 className="sticky top-0 z-10 bg-background/95 px-2 pt-5 pb-2 text-sm font-semibold backdrop-blur">{children}</h2>
+  return <h2 className="sticky top-0 z-10 bg-background px-2 pt-5 pb-2 text-sm font-semibold">{children}</h2>
 }
 
-function Sections({ course, active, open }: { course: MoodleCourseContent; active?: number; open: (cmid: number) => void }) {
+function Sections({
+  course,
+  active,
+  open,
+  warm,
+}: {
+  course: MoodleCourseContent
+  active?: number
+  open: (cmid: number) => void
+  warm: (cmid: number) => void
+}) {
   const [zoom, setZoom] = useState<string | null>(null)
   // Teachers add the newest topic at the bottom: it goes on top here, and the general section (number 0) last.
   const sections = useMemo(
@@ -357,7 +391,9 @@ function Sections({ course, active, open }: { course: MoodleCourseContent; activ
   // a search hit points at an activity with #m<cmid>
   const hash = useRouterState({ select: (s) => s.location.hash })
   useEffect(() => {
-    if (hash) document.getElementById(hash)?.scrollIntoView({ block: 'center' })
+    // after the router's own scroll, which puts the row under the sticky heading
+    const t = setTimeout(() => hash && document.getElementById(hash)?.scrollIntoView({ block: 'center' }), 50)
+    return () => clearTimeout(t)
   }, [hash, course.id])
   if (!course.sections.length) return <p className="p-10 text-center text-muted-foreground">Empty</p>
   return (
@@ -372,7 +408,7 @@ function Sections({ course, active, open }: { course: MoodleCourseContent; activ
           <SectionHeading>{s.name}</SectionHeading>
           {s.summary && <Clamp html={s.summary} className="px-2 pb-2 text-sm text-muted-foreground" />}
           {s.modules.map((m) => (
-            <ModuleRow key={m.cmid} m={m} active={active === m.cmid} open={open} />
+            <ModuleRow key={m.cmid} m={m} active={active === m.cmid} target={hash === `m${m.cmid}`} open={open} warm={warm} />
           ))}
         </section>
       ))}
@@ -384,7 +420,7 @@ function Sections({ course, active, open }: { course: MoodleCourseContent; activ
 function Html({ html, className }: { html: string; className?: string }) {
   const clean = useMemo(() => safeHtml(html), [html])
   if (!clean.replace(/<[^>]+>|&nbsp;|\s/g, '') && !clean.includes('<img')) return null
-  return <div className={cn('tm-msg leading-relaxed', className)} dangerouslySetInnerHTML={{ __html: clean }} />
+  return <div className={cn('tm-msg overflow-x-auto leading-relaxed', className)} dangerouslySetInnerHTML={{ __html: clean }} />
 }
 
 /** Teacher text (labels, section summaries) shows two lines; a click on it or on the arrow opens the rest. */
@@ -418,18 +454,18 @@ function Clamp({ html, className }: { html: string; className?: string }) {
 
 const rowCls = 'flex min-w-0 flex-1 items-center gap-3 px-2 py-2 text-left'
 
-function FileRow({ f, indent }: { f: MoodleFile; indent?: boolean }) {
+function FileRow({ f, indent, target }: { f: MoodleFile; indent?: boolean; target?: boolean }) {
   const Icon = iconFor(f.name)
   return (
-    <div className={cn('group flex items-center rounded-lg text-sm transition-colors hover:bg-white/5', indent && 'ml-7')}>
+    <div className={cn('group relative flex items-center rounded-lg text-sm transition-colors hover:bg-white/5', indent && 'ml-7', target && 'bg-white/10')}>
       <a className={rowCls} href={f.view} target="_blank" rel="noopener noreferrer">
         <Icon className="size-5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
         <span className="min-w-0 flex-1 truncate">{f.name}</span>
-        <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">{sizeText(f.size)}</span>
+        <span className="hidden shrink-0 text-xs text-muted-foreground group-hover:invisible sm:block">{sizeText(f.size)}</span>
       </a>
       <a
         href={`${f.view}&download=true`}
-        className="mr-1 rounded p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-foreground focus-visible:opacity-100"
+        className="absolute top-1/2 right-1 hidden -translate-y-1/2 rounded p-1.5 text-muted-foreground group-hover:block hover:bg-white/10 hover:text-foreground"
         aria-label="Download"
       >
         <Download className="size-4" />
@@ -438,8 +474,24 @@ function FileRow({ f, indent }: { f: MoodleFile; indent?: boolean }) {
   )
 }
 
-function ModuleRow({ m, active, open }: { m: MoodleModule; active: boolean; open: (cmid: number) => void }) {
-  const [expanded, setExpanded] = useState(false)
+function ModuleRow({
+  m,
+  active,
+  target,
+  open,
+  warm,
+}: {
+  m: MoodleModule
+  active: boolean
+  /** a search hit points here: marked, and a folder or page opens */
+  target: boolean
+  open: (cmid: number) => void
+  warm: (cmid: number) => void
+}) {
+  const [expanded, setExpanded] = useState(target)
+  useEffect(() => {
+    if (target) setExpanded(true)
+  }, [target])
   const id = `m${m.cmid}`
   if (m.type === 'label') return <Clamp html={m.description} className="px-2 py-2 text-sm text-muted-foreground" />
 
@@ -453,8 +505,8 @@ function ModuleRow({ m, active, open }: { m: MoodleModule; active: boolean; open
     </>
   )
   const wrap = (child: React.ReactNode, below?: React.ReactNode) => (
-    <div id={id}>
-      <div className={cn('group flex items-center rounded-lg text-sm transition-colors hover:bg-white/5', active && 'bg-white/10')}>{child}</div>
+    <div id={id} className="scroll-mt-14">
+      <div className={cn('group flex items-center rounded-lg text-sm transition-colors hover:bg-white/5', (active || target) && 'bg-white/10')}>{child}</div>
       {below}
     </div>
   )
@@ -468,7 +520,7 @@ function ModuleRow({ m, active, open }: { m: MoodleModule; active: boolean; open
     )
   if (m.type === 'assign')
     return wrap(
-      <button className={rowCls} onClick={() => open(m.cmid)}>
+      <button className={rowCls} onClick={() => open(m.cmid)} onMouseEnter={() => warm(m.cmid)}>
         {name}
         {/* one rule for the right slot: the grade, else a check when handed in, else when it is due */}
         {m.grade ? (
@@ -484,7 +536,7 @@ function ModuleRow({ m, active, open }: { m: MoodleModule; active: boolean; open
         )}
       </button>,
     )
-  if (m.type === 'resource' && m.files.length === 1) return <div id={id}><FileRow f={{ ...m.files[0], name: m.name }} /></div>
+  if (m.type === 'resource' && m.files.length === 1) return <div id={id} className="scroll-mt-14"><FileRow f={{ ...m.files[0], name: m.name }} target={target} /></div>
   if (m.type === 'folder' || (m.type === 'resource' && m.files.length > 1))
     return wrap(
       <button className={rowCls} onClick={() => setExpanded((v) => !v)}>

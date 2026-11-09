@@ -19,7 +19,10 @@ export function MoodleAssignmentView({ cmid, courseId, onClose }: { cmid: number
   const description = useMemo(() => safeHtml(a.data?.description ?? ''), [a.data?.description])
   const sub = a.data?.submission
   const done = sub?.status === 'submitted'
-  const due = dueText(a.data?.extensionDue ?? a.data?.due ?? null)
+  const dueAt = a.data?.extensionDue ?? a.data?.due ?? null
+  const due = dueText(dueAt)
+  // an item that only carries a grade (nothing to hand in, nothing handed in): no status, no My work
+  const work = !!a.data && !!sub && (a.data.files || a.data.onlineText || sub.files.length > 0 || !!sub.text || sub.status !== 'none')
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -56,16 +59,18 @@ export function MoodleAssignmentView({ cmid, courseId, onClose }: { cmid: number
         {a.data && (
           <>
             <h2 className="text-lg font-semibold tracking-tight">{a.data.name}</h2>
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-              <span
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1',
-                  !done && due.late ? 'text-destructive' : !done && due.soon ? 'text-amber-400' : 'text-muted-foreground',
-                )}
-              >
-                <CalendarClock className="size-3.5" /> {longTime(a.data.extensionDue ?? a.data.due) || 'No due date'}
-              </span>
-              {sub && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs empty:hidden">
+              {dueAt && (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1',
+                    !done && due.late ? 'text-destructive' : !done && due.soon ? 'text-amber-400' : 'text-muted-foreground',
+                  )}
+                >
+                  <CalendarClock className="size-3.5" /> {longTime(dueAt)}
+                </span>
+              )}
+              {work && sub && (
                 <span className={cn('rounded-full px-2.5 py-1 font-medium', done ? 'bg-primary/15 text-primary' : 'bg-white/5 text-muted-foreground')}>
                   {STATUS[sub.status] ?? sub.status}
                 </span>
@@ -79,7 +84,7 @@ export function MoodleAssignmentView({ cmid, courseId, onClose }: { cmid: number
 
             {description && <div className="tm-msg mt-5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: description }} />}
             {!!a.data.attachments.length && <Files title="Material" items={a.data.attachments} />}
-            {sub && <MyWork a={a.data} />}
+            {work && <MyWork a={a.data} />}
 
             {a.data.feedback && (a.data.feedback.comments || !!a.data.feedback.files.length) && (
               <section className="mt-5 rounded-xl bg-card p-4">
@@ -231,9 +236,7 @@ function MyWork({ a }: { a: MoodleAssignment }) {
         ) : (
           sub.text && <div className="tm-msg mt-3 text-sm" dangerouslySetInnerHTML={{ __html: safeHtml(sub.text) }} />
         ))}
-      {!sub.files.length && !a.files && !a.onlineText && <p className="text-sm text-muted-foreground">Nothing to hand in here</p>}
-      <div className="mt-4 flex flex-wrap justify-end gap-2">
-        <input
+      <input
           ref={input}
           type="file"
           multiple
@@ -243,6 +246,7 @@ function MyWork({ a }: { a: MoodleAssignment }) {
             e.target.value = ''
           }}
         />
+      <div className="mt-4 flex flex-wrap justify-end gap-2 empty:hidden">
         {canFiles && (sub.files.length > 0 || uploading.length > 0) && !full && (
           <Button variant="ghost" size="sm" onClick={() => input.current?.click()} disabled={busy || uploading.length > 0}>
             <Paperclip /> Add file

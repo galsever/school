@@ -618,6 +618,11 @@ async def course(course_id: int) -> dict:
     }
 
 
+def _whole(number: str) -> str:
+    """100.00 -> 100 (Moodle pads whole numbers)."""
+    return re.sub(r"(\d)[.,]00\b", r"\1", number)
+
+
 async def grade_items(course_id: int) -> list[dict]:
     out = await cached("gradereport_user_get_grade_items", {"courseid": course_id, "userid": (await site())["userid"]})
     rows = []
@@ -633,9 +638,9 @@ async def grade_items(course_id: int) -> list[dict]:
                 "type": it.get("itemmodule") or kind,
                 "total": kind in ("course", "category"),
                 "cmid": it.get("cmid") or None,
-                "grade": plain(it.get("gradeformatted")) or "-",
+                "grade": _whole(plain(it.get("gradeformatted"))) or "-",
                 "range": plain(it.get("rangeformatted")),
-                "percentage": plain(it.get("percentageformatted")),
+                "percentage": _whole(plain(it.get("percentageformatted"))),
                 "weight": "" if weight == "-" else weight,
                 "feedback": html_text(it.get("feedback")),
                 "gradedAt": iso(it.get("gradedategraded")),
