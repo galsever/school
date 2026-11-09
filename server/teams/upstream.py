@@ -4,7 +4,9 @@ Every function returns the app's own API shapes (docs/API.md), never raw upstrea
 """
 
 import asyncio
+import base64
 import html
+import json
 import re
 import secrets
 import time
@@ -111,7 +113,7 @@ async def chats() -> list[dict]:
             "kind": kind,
             "title": tp.get("topic") or tp.get("spaceThreadTopic") or "",
             "last": {
-                "text": text_of(last.get("content", "")),
+                "text": _preview(last),
                 "from": last.get("imdisplayname") or "",
                 "time": last.get("composetime"),
                 "mine": mine,
@@ -142,19 +144,144 @@ async def _title_from_members(items: list[dict], my: str) -> None:
         item["title"] = ", ".join(resolved[i] for i in ids[:4]) or "Chat"
 
 
+# ---- cards and files ----------------------------------------------------------
+
+_SWIFT = re.compile(r'<Swift b64="([^"]+)"')
+_ASSIGNMENT_LINK = "66aeee93-507d-479a-a3ef-8f494af43945"  # Assignments app id in Teams deep links
+
+
+def _assignment_target(url: str) -> dict | None:
+    """Teams deep link of the Assignments app -> {classId, id} for our own page."""
+    if _ASSIGNMENT_LINK not in url:
+        return None
+    from urllib.parse import parse_qs, urlparse
+
+    try:
+        ctx = json.loads(parse_qs(urlparse(url).query)["context"][0])
+        cls = json.loads(ctx["subEntityId"])["config"]["classes"][0]
+        return {"classId": cls["id"], "id": cls["assignmentIds"][0]}
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+
+
+def _action(a: dict) -> dict | None:
+    url = a.get("url") or a.get("value")
+    if a.get("type") not in ("Action.OpenUrl", "openUrl") or not isinstance(url, str) or not url.startswith("https://"):
+        return None
+    return {"title": a.get("title") or "Open", "url": url, "assignment": _assignment_target(url)}
+
+
+def _walk(node, out: dict) -> None:
+    """Collect what can be shown from an Adaptive Card body: text, facts, images, buttons."""
+    if isinstance(node, list):
+        for n in node:
+            _walk(n, out)
+        return
+    if not isinstance(node, dict):
+        return
+    t = node.get("type")
+    if t == "TextBlock" and str(node.get("text", "")).strip():
+        out["blocks"].append(
+            {
+                "text": str(node["text"]).strip(),
+                "size": node.get("size", "default").lower(),
+                "bold": str(node.get("weight", "")).lower() == "bolder",
+                "subtle": bool(node.get("isSubtle")),
+            }
+        )
+    elif t == "RichTextBlock":
+        text = "".join(i.get("text", "") if isinstance(i, dict) else str(i) for i in node.get("inlines", []))
+        if text.strip():
+            out["blocks"].append({"text": text.strip(), "size": "default", "bold": False, "subtle": False})
+    elif t == "FactSet":
+        for f in node.get("facts", []):
+            out["blocks"].append({"text": f"{f.get('title', '')}: {f.get('value', '')}", "size": "small", "bold": False, "subtle": False})
+    elif t == "Image" and str(node.get("url", "")).startswith("https://"):
+        out["images"].append(node["url"])
+    elif t and t.startswith("Action."):
+        a = _action(node)
+        if a:
+            out["actions"].append(a)
+    for key in ("body", "items", "columns", "actions", "card"):
+        if key in node:
+            _walk(node[key], out)
+    if node.get("selectAction"):
+        _walk(node["selectAction"], out)
+
+
+def _cards(content: str) -> list[dict]:
+    m = _SWIFT.search(content or "")
+    if not m:
+        return []
+    try:
+        swift = json.loads(base64.b64decode(m.group(1)))
+    except ValueError:
+        return []
+    cards = []
+    for att in swift.get("attachments", []):
+        c = att.get("content") or {}
+        out = {"blocks": [], "images": [], "actions": []}
+        ctype = att.get("contentType", "")
+        if ctype.endswith("card.adaptive"):
+            _walk(c.get("body", []), out)
+            _walk(c.get("actions", []), out)
+        else:  # hero / thumbnail / o365 connector cards
+            for key, size, bold in (("title", "large", True), ("subtitle", "default", False), ("text", "default", False)):
+                if c.get(key):
+                    out["blocks"].append({"text": _TAG.sub(" ", str(c[key])).strip(), "size": size, "bold": bold, "subtle": key == "subtitle"})
+            out["images"] += [i["url"] for i in c.get("images", []) if str(i.get("url", "")).startswith("https://")]
+            out["actions"] += [a for a in (_action(b) for b in c.get("buttons", [])) if a]
+        if out["blocks"] or out["actions"]:
+            cards.append(out)
+    return cards
+
+
+def _files(props: dict) -> list[dict]:
+    files = props.get("files")
+    if isinstance(files, str):
+        try:
+            files = json.loads(files)
+        except ValueError:
+            files = []
+    return [
+        {
+            "name": f.get("fileName") or f.get("title") or "File",
+            "url": f.get("objectUrl") or (f.get("fileInfo") or {}).get("fileUrl"),
+            "type": (f.get("fileType") or "").lower(),
+            "size": f.get("fileSize"),
+        }
+        for f in files or []
+        if isinstance(f, dict)
+    ]
+
+
+def _preview(m: dict) -> str:
+    if m.get("messagetype") == "RichText/Media_Card":
+        cards = _cards(m.get("content", ""))
+        return cards[0]["blocks"][0]["text"][:200] if cards and cards[0]["blocks"] else "Card"
+    text = text_of(m.get("content", ""))
+    if not text:
+        files = _files(m.get("properties") or {})
+        return files[0]["name"] if files else ""
+    return text
+
+
 def _message(m: dict, my: str) -> dict | None:
     mtype = m.get("messagetype", "")
     if not (mtype.startswith("RichText") or mtype == "Text"):
         return None
     props = m.get("properties") or {}
+    card = mtype == "RichText/Media_Card"
     return {
         "id": m["id"],
         "fromId": _oid(m.get("from", "")),
         "from": m.get("imdisplayname") or "",
         "mine": _oid(m.get("from", "")) == my,
         "time": m.get("composetime"),
-        "html": "" if props.get("deletetime") else m.get("content", ""),
+        "html": "" if props.get("deletetime") or card else m.get("content", ""),
         "format": "html" if mtype.startswith("RichText") else "text",
+        "cards": _cards(m.get("content", "")) if card else [],
+        "files": _files(props),
         "edited": bool(props.get("edittime")),
         "deleted": bool(props.get("deletetime")),
         "subject": props.get("subject") or None,

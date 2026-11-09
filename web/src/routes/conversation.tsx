@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Loader2, SendHorizontal } from 'lucide-react'
+import { ArrowLeft, ExternalLink, FileText, Loader2, SendHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar } from '@/components/Avatar'
 import { ErrorView } from '@/components/ErrorView'
@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { api, errorText } from '@/lib/api'
 import { longTime, safeHtml, shortTime } from '@/lib/format'
 import { q, queryClient } from '@/lib/query'
-import type { Message } from '@/lib/types'
+import type { Card, Message, MessageFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 export function ConversationPage() {
@@ -46,7 +46,7 @@ function Conversation({ id, back }: { id: string; back: '/chats' | '/teams' }) {
 
   const messages = useMemo(() => {
     const byId = new Map<string, Message>()
-    for (const m of [...older, ...(latest.data?.messages ?? [])]) byId.set(m.id, m)
+    for (const m of [...older, ...(latest.data?.messages ?? [])]) if (!m.deleted) byId.set(m.id, m)
     return [...byId.values()].sort((a, b) => a.time.localeCompare(b.time))
   }, [older, latest.data])
 
@@ -88,6 +88,8 @@ function Conversation({ id, back }: { id: string; back: '/chats' | '/teams' }) {
       edited: false,
       deleted: false,
       subject: null,
+      cards: [],
+      files: [],
     }
     setPending((p) => [...p, temp])
     try {
@@ -158,14 +160,91 @@ function Bubble({ m, grouped, showName, pending }: { m: Message; grouped: boolea
         )}
       >
         {m.subject && <div className="mb-1 font-semibold">{m.subject}</div>}
-        {m.deleted ? (
-          <span className="text-muted-foreground italic">Deleted</span>
-        ) : m.format === 'html' ? (
-          <div className="tm-msg" dangerouslySetInnerHTML={{ __html: html }} />
+        {m.format === 'html' ? (
+          html && <div className="tm-msg" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <div className="whitespace-pre-wrap">{m.html}</div>
         )}
+        {m.cards.map((c, i) => (
+          <CardView key={i} card={c} />
+        ))}
+        {m.files.length > 0 && <Files files={m.files} />}
       </div>
+    </div>
+  )
+}
+
+const TEXT_SIZE: Record<string, string> = {
+  small: 'text-[13px]',
+  default: 'text-[15px]',
+  medium: 'text-base',
+  large: 'text-lg',
+  extralarge: 'text-xl',
+}
+
+function CardView({ card }: { card: Card }) {
+  return (
+    <div className="flex flex-col gap-1 py-0.5">
+      {card.blocks.map((b, i) => (
+        <p
+          key={i}
+          className={cn(TEXT_SIZE[b.size] ?? 'text-[15px]', b.bold && 'font-semibold', (b.subtle || b.size === 'small') && 'text-muted-foreground')}
+        >
+          {b.text}
+        </p>
+      ))}
+      {card.images.map((src) => (
+        <img key={src} src={src} alt="" loading="lazy" className="max-h-60 rounded-lg" />
+      ))}
+      {card.actions.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-2">
+          {card.actions.map((a, i) =>
+            a.assignment ? (
+              <Button key={i} size="sm" variant="secondary" asChild>
+                <Link to="/assignments/$classId/$id" params={a.assignment}>
+                  {a.title}
+                </Link>
+              </Button>
+            ) : (
+              <Button key={i} size="sm" variant="secondary" asChild>
+                <a href={a.url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink /> {a.title}
+                </a>
+              </Button>
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Files({ files }: { files: MessageFile[] }) {
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5">
+      {files.map((f, i) => {
+        const body = (
+          <>
+            <FileText className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate">{f.name}</span>
+          </>
+        )
+        return f.url ? (
+          <a
+            key={i}
+            href={f.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 rounded-lg bg-black/20 px-3 py-2 text-sm hover:bg-black/30"
+          >
+            {body}
+          </a>
+        ) : (
+          <div key={i} className="flex items-center gap-2 rounded-lg bg-black/20 px-3 py-2 text-sm">
+            {body}
+          </div>
+        )
+      })}
     </div>
   )
 }

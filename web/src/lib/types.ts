@@ -19,6 +19,11 @@ export type Chat = {
   unread: boolean
 }
 
+export type CardBlock = { text: string; size: string; bold: boolean; subtle: boolean }
+export type CardAction = { title: string; url: string; assignment: { classId: string; id: string } | null }
+export type Card = { blocks: CardBlock[]; images: string[]; actions: CardAction[] }
+export type MessageFile = { name: string; url: string | null; type: string; size: number | null }
+
 export type Message = {
   id: string
   fromId: string
@@ -30,6 +35,8 @@ export type Message = {
   edited: boolean
   deleted: boolean
   subject: string | null
+  cards: Card[]
+  files: MessageFile[]
 }
 
 export type MessagePage = { messages: Message[]; cursor: string | null }
