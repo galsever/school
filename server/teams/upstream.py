@@ -11,6 +11,7 @@ import re
 import secrets
 import time
 
+from . import prefs
 from .ms import GRAPH, session
 
 ASSIGNMENTS = "https://assignments.onenote.com/api/v1.0/edu"
@@ -154,8 +155,29 @@ async def chats() -> list[dict]:
             untitled.append(item)
         out.append(item)
     await _title_from_members(untitled, my)
+    await _channel_prefs(out)
     out.sort(key=lambda x: (x["last"] or {}).get("time") or "", reverse=True)
     return out
+
+
+async def _channel_prefs(items: list[dict]) -> None:
+    """Own names for channel conversations; a hidden channel (or one of a hidden team) is muted: never unread."""
+    if not prefs.any_set() or not any(i["kind"] == "channel" for i in items):
+        return
+    try:
+        by = {c["id"]: (t, c) for t in await teams() for c in t["channels"]}
+    except Upstream:
+        return
+    for i in items:
+        if i["kind"] != "channel" or i["id"] not in by:
+            continue
+        t, c = by[i["id"]]
+        if i["title"] == c["original"]:
+            i["title"] = c["name"]
+        elif i["title"] == t["original"]:
+            i["title"] = t["name"]
+        if t["hidden"] or c["hidden"]:
+            i["unread"] = False
 
 
 async def _title_from_members(items: list[dict], my: str) -> None:
@@ -355,6 +377,18 @@ async def mark_read(conv: str, message_id: str) -> None:
 # ---- teams and channels ----------------------------------------------------
 
 async def teams() -> list[dict]:
+    """Teams with their channels. `name` is the own display name when one is set (prefs), `original` Microsoft's;
+    `hidden` ones are folded away in the list and muted."""
+
+    def shown(x: dict) -> dict:
+        return {"id": x["id"], "name": prefs.name(x["id"], x["name"]), "original": x["name"], "hidden": prefs.hidden(x["id"])}
+
+    out = [{**shown(t), "channels": [shown(c) for c in t["channels"]]} for t in await _teams_raw()]
+    out.sort(key=lambda t: t["name"].lower())
+    return out
+
+
+async def _teams_raw() -> list[dict]:
     global _teams
     if _teams and _teams[0] > time.time() - 600:
         return _teams[1]

@@ -74,6 +74,9 @@ export const api = {
   mailPeople: (q: string) => request<MailAddress[]>(`/api/mail/people?q=${enc(q)}`),
   mailSend: (m: { to: string[]; cc: string[]; subject: string; text: string }) => post('/api/mail/send', m),
   mailReply: (id: string, text: string, all: boolean) => post(`/api/mail/${enc(id)}/reply`, { text, all }),
+  /** Own name (null = Microsoft's again) and hidden flag of a team or channel. */
+  setPref: (id: string, p: { name?: string | null; hidden?: boolean }) =>
+    request<void>(`/api/prefs/${enc(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) }),
   channelFiles: (teamId: string, channelId: string) =>
     request<ChannelFolder>(`/api/teams/${enc(teamId)}/channels/${enc(channelId)}/files`),
   folder: (drive: string, item: string) => request<Folder>(`/api/drives/${enc(drive)}/items/${enc(item)}/children`),

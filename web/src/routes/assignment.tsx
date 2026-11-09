@@ -10,7 +10,7 @@ import { api, errorText } from '@/lib/api'
 import { dueText, longTime, safeHtml } from '@/lib/format'
 import { q, queryClient } from '@/lib/query'
 import type { AssignmentDetail, Resource } from '@/lib/types'
-import { cn } from '@/lib/utils'
+import { cn, mainChannel } from '@/lib/utils'
 
 const STATUS: Record<string, string> = {
   working: 'Not turned in',
@@ -121,7 +121,7 @@ export function AssignmentView({ classId, id, compact }: { classId: string; id: 
 function ClassLink({ classId, name }: { classId: string; name: string }) {
   const teams = useQuery(q.teams())
   const team = teams.data?.find((t) => t.id === classId)
-  const main = team && (team.channels.find((c) => c.name === 'General' || c.name === 'Allgemein') ?? team.channels[0])
+  const main = team && mainChannel(team.channels)
   if (!main) return <p className="truncate text-xs font-medium tracking-wide text-muted-foreground uppercase">{name}</p>
   return (
     <Link

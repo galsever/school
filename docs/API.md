@@ -12,7 +12,8 @@ All JSON. Errors: `{"error": code, "detail": text}`; `401 login_required` (app p
 | GET | `/api/chats/{id}/messages?cursor=` | `{messages: Message[] oldest first, cursor}`; cursor = next older page |
 | POST | `/api/chats/{id}/messages` | `{text}` -> sends as HTML paragraphs |
 | POST | `/api/chats/{id}/read` | `{messageId}` -> sets the read horizon |
-| GET | `/api/teams` | `Team[]` with channels (cached 10 min); a channel id opens with the chat routes |
+| GET | `/api/teams` | `Team[]` with channels (cached 10 min); a channel id opens with the chat routes. Team and channel: `{id, name, original, hidden}`, `name` is the own display name when set |
+| PUT | `/api/prefs/{id}` | own name and hidden flag of a team or channel: `{name?, hidden?}` (empty name = Microsoft's again). Stored in `DATA_DIR/prefs.json`; names apply to teams, chats, assignments and MCP, hidden ones are never unread |
 | GET | `/api/assignments` | `Assignment[]` by due date; `done` = own submission submitted or returned |
 | GET | `/api/assignments/{classId}/{id}` | assignment with instructions, resources and own submission |
 

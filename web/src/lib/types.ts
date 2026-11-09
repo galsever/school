@@ -41,7 +41,9 @@ export type Message = {
 
 export type MessagePage = { messages: Message[]; cursor: string | null }
 
-export type Team = { id: string; name: string; channels: { id: string; name: string }[] }
+/** `name` is the own display name when one is set, `original` Microsoft's; `hidden` ones are folded away and muted. */
+export type Channel = { id: string; name: string; original: string; hidden: boolean }
+export type Team = Channel & { channels: Channel[] }
 
 export type Resource = { id: string; name: string; kind: string; url: string | null }
 

@@ -96,8 +96,8 @@ async def send_message(chat_id: str, text: str) -> str:
 async def list_teams() -> str:
     out = []
     for t in await upstream.teams():
-        out.append(f"- {t['name']} team_id={t['id']}")
-        out += [f"  # {c['name']} channel_id={c['id']}" for c in t["channels"]]
+        out.append(f"- {t['name']}{' (hidden)' if t['hidden'] else ''} team_id={t['id']}")
+        out += [f"  # {c['name']}{' (hidden)' if c['hidden'] else ''} channel_id={c['id']}" for c in t["channels"]]
     return "\n".join(out) or "No teams."
 
 

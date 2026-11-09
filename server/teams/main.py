@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-from . import auth, config, mail, mcp, upstream
+from . import auth, config, mail, mcp, prefs, upstream
 from .ms import NotConnected, session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -154,6 +154,15 @@ async def media(url: str):
 @app.get("/api/teams", dependencies=guard)
 async def teams():
     return await upstream.teams()
+
+
+@app.put("/api/prefs/{item_id}", dependencies=guard)
+async def set_pref(item_id: str, payload: dict = Body(...)):
+    """Own display name and hidden flag of a team or channel: `{name?, hidden?}` (empty name = Microsoft's again)."""
+    if not prefs.ID.match(item_id):
+        raise HTTPException(400, {"error": "bad_id", "detail": "Bad id"})
+    prefs.update(item_id, {k: payload[k] for k in ("name", "hidden") if k in payload})
+    return Response(status_code=204)
 
 
 def _ids(*ids: str) -> None:
