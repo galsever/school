@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, ClipboardList, ExternalLink, FileText, Loader2, SendHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar } from '@/components/Avatar'
+import { Lightbox } from '@/components/Lightbox'
 import { ErrorView } from '@/components/ErrorView'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -132,8 +133,17 @@ function Conversation({
     return true
   }
 
+  const [zoom, setZoom] = useState<string | null>(null)
+
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      onClick={(e) => {
+        const img = e.target as HTMLElement
+        if (img.tagName === 'IMG' && img.closest('[data-zoomable]')) setZoom((img as HTMLImageElement).src)
+      }}
+    >
+      <Lightbox src={zoom} onClose={() => setZoom(null)} />
       <header className="flex h-14 shrink-0 items-center gap-3 border-b px-3">
         <Link to={back} className="-ml-1 rounded-md p-1.5 hover:bg-white/10 md:hidden" aria-label="Back">
           <ArrowLeft className="size-5" />
@@ -282,7 +292,7 @@ function CardView({ card }: { card: Card }) {
         </p>
       ))}
       {card.images.map((src) => (
-        <img key={src} src={src} alt="" loading="lazy" className="max-h-60 rounded-lg" />
+        <img key={src} src={src} alt="" loading="lazy" data-zoomable className="max-h-60 cursor-zoom-in rounded-lg" />
       ))}
       {card.actions.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-2">
