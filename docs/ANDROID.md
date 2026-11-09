@@ -6,7 +6,9 @@ Native Android client for the hub, folder `android/`, app id `com.galsever.schoo
 
 - Branch `android` (not merged to main). Worktree on the dev box: `~/scratch/school-android`.
 - All screens are written and the debug build **compiles** on the PC (`EXIT=0`). It has **not run yet**: no screen has been seen in the emulator, nothing is tested against the hub.
-- No CI workflow and no signing keystore yet, so no release APK.
+- Release signing exists (2026-11-10): keystore `~/.config/school/school.jks` and `keystore-password` on the dev box (alias `school`; losing it means no more updates), also as GitHub secrets `SC_KEYSTORE_B64` and `SC_KEYSTORE_PASSWORD` on galsever/school. No copy on the PC.
+- A signed release APK 0.1 (versionCode 1, never run) went to his phone so the BlockerHero install delay could run out: `~/scratch/school-apk/school-0.1.apk`, built on the PC with `release.ps1` in the PC home. Later builds must have versionCode 2 or higher to install over it.
+- No CI workflow yet.
 
 Decisions he made (2026-11-09): full parity with the website in the first release (all seven tabs); notifications by a background check every 15 minutes (WorkManager, no Firebase); phone extra: camera pages to an assignment as one PDF. Look: the website's dark palette.
 
@@ -15,7 +17,7 @@ Decisions he made (2026-11-09): full parity with the website in the first releas
 1. Run it in the emulator on the PC: AVD `earworm` (shared with Earworm). Over ssh the emulator dies when the session ends; start it through WMI so it survives (`android/tools` has no script for it yet; the last try was interrupted, so check `adb devices` first: an emulator may still be running on the PC).
 2. Sign in: the app opens the Pocket ID gate in a Chrome tab. The emulator has no passkey, so first open a one-time login link in the emulator's browser (`docker exec pocket-id /app/pocket-id one-time-access-token <user>` on the Pocket ID host, link `https://auth.example.com/lc/<token>`, valid 1 h, one use), then start the app.
 3. Go through every tab with screenshots (`adb shell screencap`), fix what is broken. Things most likely to need work: WebView height of mail and HTML in scrolling screens, the message list paging, the quote split of mails, the document scanner on the emulator (needs Play services).
-4. CI: `.github/workflows/android.yml` like Earworm's (`SC_KEYSTORE`, `SC_KEYSTORE_PASSWORD`, `SC_VERSION_CODE`, `SC_VERSION_NAME` are already read in `app/build.gradle.kts`), a new keystore kept on the dev box under `~/.config/school/`, secrets `SC_KEYSTORE_B64` and `SC_KEYSTORE_PASSWORD` on galsever/school.
+4. CI: `.github/workflows/android.yml` like Earworm's (`SC_KEYSTORE`, `SC_KEYSTORE_PASSWORD`, `SC_VERSION_CODE`, `SC_VERSION_NAME` are already read in `app/build.gradle.kts`; the secrets are set). Use versionCode = run number + 1 so the first CI APK installs over 0.1.
 5. Merge `android` into main (rebase first: other sessions commit to main), APK to his phone.
 
 ## Build
