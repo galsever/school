@@ -1,7 +1,9 @@
 """MCP server (streamable HTTP, stateless JSON-RPC) at /api/mcp: the school Teams account, the WebUntis absences and Moodle as tools for Claude.
 
-Teams: read everything, send messages and mail, no turn-in or uploads (his decision 2026-11-09). Moodle: all tools of the
-former moodle-mcp including submit (his decision 2026-11-09). Own bearer token
+Teams: read everything, send messages and mail, and since his decision 2026-11-10 also assignment writes (add and remove
+files, turn in, undo turn in; this replaces his 2026-11-09 "no turn-in via MCP"). Moodle: all tools of the former
+moodle-mcp including submit (2026-11-09), choices and publications (2026-11-10). WebUntis: absences plus the timetable,
+exams and homework of the former untis-mcp (2026-11-10). Writes only on the owner's word. Own bearer token
 (DATA_DIR/mcp-token): the route skips the Pocket ID gate (personal-infra apps/school-hub/mcp-route.yaml), tailnet only.
 """
 
@@ -14,7 +16,7 @@ from urllib.parse import unquote
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from . import absences_api, config, mail, moodle, moodle_api, upstream
+from . import absences_api, config, mail, moodle, moodle_api, timetable, upstream
 
 TOKEN = config._secret_file("mcp-token", lambda: __import__("secrets").token_urlsafe(36))
 PROTOCOL = "2025-06-18"
@@ -183,6 +185,7 @@ async def get_assignment(class_id: str, assignment_id: str) -> str:
                 ref = _drive_ref(r["url"])
                 lines.append(
                     f"- {r['name']}"
+                    + (f"  resource_id={r['id']}" if title == "My work" and r.get("id") else "")
                     + (f"  drive_id={ref['drive_id']} item_id={ref['item_id']}" if ref else (f"  {r['url']}" if r["url"] else ""))
                 )
 
@@ -236,6 +239,34 @@ async def reply_mail(mail_id: str, text: str, reply_all: bool = False) -> str:
     return "Replied."
 
 
+async def add_assignment_file(class_id: str, assignment_id: str, upload_id: str) -> str:
+    (name, path), = moodle_api._take([upload_id])
+
+    async def chunks():
+        with path.open("rb") as f:
+            while block := f.read(1 << 20):
+                yield block
+
+    await upstream.upload(class_id, assignment_id, name, path.stat().st_size, chunks())
+    moodle_api.drop_uploads([(name, path)])
+    return f"Added {name} to My work (not turned in yet)."
+
+
+async def remove_assignment_file(class_id: str, assignment_id: str, resource_id: str) -> str:
+    await upstream.remove_file(class_id, assignment_id, resource_id)
+    return "Removed."
+
+
+async def turn_in(class_id: str, assignment_id: str) -> str:
+    await upstream.turn_in(class_id, assignment_id)
+    return "Turned in."
+
+
+async def undo_turn_in(class_id: str, assignment_id: str) -> str:
+    await upstream.turn_in(class_id, assignment_id, undo=True)
+    return "Turn in undone."
+
+
 S = {"type": "string"}
 TOOLS = {
     "list_chats": (
@@ -277,7 +308,8 @@ TOOLS = {
     ),
     "get_assignment": (
         get_assignment,
-        "Assignment details: instructions, material files (readable with read_file), own submission, feedback and points.",
+        "Assignment details: instructions, material files (readable with read_file), own submission with resource ids of My "
+        "work, feedback and points.",
         {"class_id": S, "assignment_id": S},
         ["class_id", "assignment_id"],
     ),
@@ -306,9 +338,44 @@ TOOLS = {
         ["mail_id", "text"],
     ),
 }
+_AS = {"class_id": S, "assignment_id": S}
+TOOLS.update(
+    {
+        "add_assignment_file": (
+            add_assignment_file,
+            "Teams assignment: add a local file to My work (upload_id from upload_link, after curl -T). Does not turn in. Real "
+            "school account: only when the user asked for it.",
+            {**_AS, "upload_id": S},
+            ["class_id", "assignment_id", "upload_id"],
+        ),
+        "remove_assignment_file": (
+            remove_assignment_file,
+            "Teams assignment: remove a file from My work (resource_id from get_assignment). Only when the user asked for it.",
+            {**_AS, "resource_id": S},
+            ["class_id", "assignment_id", "resource_id"],
+        ),
+        "turn_in": (
+            turn_in,
+            "Teams assignment: turn in My work for real (the teacher sees it). Only when the user clearly said to turn it in.",
+            _AS,
+            ["class_id", "assignment_id"],
+        ),
+        "undo_turn_in": (
+            undo_turn_in,
+            "Teams assignment: undo the turn in (back to editing). Only when the user asked for it.",
+            _AS,
+            ["class_id", "assignment_id"],
+        ),
+    }
+)
 TOOLS.update(absences_api.TOOLS)
+TOOLS.update(timetable.TOOLS)
 TOOLS.update(moodle_api.TOOLS)
-WRITES = {"send_message", "send_mail", "reply_mail"} | absences_api.WRITES | moodle_api.WRITES
+WRITES = (
+    {"send_message", "send_mail", "reply_mail", "add_assignment_file", "remove_assignment_file", "turn_in", "undo_turn_in"}
+    | absences_api.WRITES
+    | moodle_api.WRITES
+)
 READ_ONLY = {n for n in TOOLS if n not in WRITES}
 
 
@@ -335,7 +402,7 @@ async def _call(name: str, args: dict) -> dict:
         return {"content": out if isinstance(out, list) else [{"type": "text", "text": out}]}
     except upstream.Upstream as e:
         return {"content": [{"type": "text", "text": f"Microsoft error {e.status}: {e}"}], "isError": True}
-    except (absences_api.Fail, moodle.MoodleError) as e:
+    except (absences_api.Fail, timetable.Fail, moodle.MoodleError) as e:
         return {"content": [{"type": "text", "text": str(e)}], "isError": True}
     except (ValueError, TypeError) as e:
         return {"content": [{"type": "text", "text": f"Bad arguments: {e}"}], "isError": True}
@@ -378,7 +445,7 @@ async def _one(m: dict) -> dict | None:
             {
                 "protocolVersion": params.get("protocolVersion") or PROTOCOL,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "school", "version": "0.3.0"},
+                "serverInfo": {"name": "school", "version": "0.4.0"},
                 "instructions": "The user's school hub (HTL Spengergasse). Microsoft account: Teams chats, class teams, channel files, "
                 "assignments and Outlook mail. Reading is free; send_message, send_mail and reply_mail act as the user on the real "
                 "school account, so only send what the user asked for. WebUntis absences: absence days with the user's own reason "
@@ -386,7 +453,10 @@ async def _one(m: dict) -> dict | None:
                 "YYYY-MM-DD (Europe/Vienna). A day needs a reason before it can go into a PDF. Lateness (only_late) never counts "
                 "against attendance. Moodle (moodle.spengergasse.at, tools moodle_*): start with moodle_deadlines for what is due, "
                 "moodle_courses for course ids, moodle_course_contents to find files, moodle_read_file to read them; "
-                "moodle_submit_assignment changes the real submission, only on the user's word.",
+                "moodle_choice/moodle_choose for choices (votes), moodle_publication/moodle_publication_change for student file folders. "
+                "WebUntis timetable, exams and homework: tools timetable, exams, homework. Teams assignments: upload_link, then "
+                "add_assignment_file, remove_assignment_file, turn_in, undo_turn_in. Every write (send, submit, turn in, vote, "
+                "upload, remove) changes the real school account: only on the user's word.",
             }
         )
     if method == "ping":

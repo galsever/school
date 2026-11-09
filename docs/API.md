@@ -138,12 +138,18 @@ Errors: 409 `moodle_not_connected` (no login, or Moodle rejects it), 400 / 404 /
 |---|---|
 | Chats | `list_chats`, `read_messages`, `send_message` |
 | Teams and files | `list_teams`, `list_files`, `read_file` (PDF/Office text) |
-| Assignments | `list_assignments`, `get_assignment` |
+| Assignments | `list_assignments`, `get_assignment`, `add_assignment_file`, `remove_assignment_file`, `turn_in`, `undo_turn_in` |
 | Mail | `list_mail`, `read_mail`, `send_mail`, `reply_mail` |
 | Absences | `absence_days`, `new_open_days`, `set_reason`, `attendance`, `excuse_pdf`, `refresh` |
-| Moodle | `moodle_deadlines`, `moodle_courses`, `moodle_course_contents`, `moodle_assignment`, `moodle_grades`, `moodle_read_file`, `moodle_upload_link`, `moodle_submit_assignment` |
+| WebUntis | `timetable`, `exams`, `homework` |
+| Uploads | `upload_link` (`moodle_upload_link` is the same tool) |
+| Moodle | `moodle_deadlines`, `moodle_courses`, `moodle_course_contents`, `moodle_assignment`, `moodle_grades`, `moodle_read_file`, `moodle_upload_link`, `moodle_submit_assignment`, `moodle_choice`, `moodle_choose`, `moodle_publication`, `moodle_publication_change` |
 
-The only tools that write to Microsoft are `send_message`, `send_mail` and `reply_mail`; `set_reason` writes the own reason of a day. No turn-in or uploads by design.
+Writing tools (readOnlyHint false, only on the owner's word): `send_message`, `send_mail`, `reply_mail`, the Teams assignment writes `add_assignment_file`, `remove_assignment_file`, `turn_in`, `undo_turn_in` (allowed since his decision 2026-11-10, before that no turn-in via MCP), `set_reason`, `new_open_days` (marks days asked), `upload_link`, `moodle_submit_assignment`, `moodle_choose`, `moodle_publication_change`.
+
+A local file reaches the hub in two steps for every hand-in: `upload_link` gives an `upload_id` and a signed link, `curl -T <file> '<url>'`, then pass the id to `add_assignment_file` (Teams, My work, not turned in), `moodle_submit_assignment` or `moodle_publication_change`. `get_assignment` lists `resource_id` for each file of My work.
+
+`timetable`, `exams`, `homework` are the former `untis-mcp` (Go, stdio) with the same shapes, on the hub's WebUntis login: one login + logout per fetch, answers cached 5 min, a rejected login sets the absences' `auth_blocked` and is never retried.
 
 Moodle tools are the former `moodle-mcp` (Go, stdio) with the same shapes. `moodle_submit_assignment` changes the real
 submission. A local file gets to the hub in two steps, because the server cannot read the model's disk:

@@ -152,4 +152,4 @@ Then start the server with that `DATA_DIR`. A pull of the live data: `snapshot.r
 
 - Nothing is written to WebUntis: an excuse is not handed in there, the signed PDF still goes to the teacher by hand.
 - Only the current school year.
-- Timetable, exams and homework from WebUntis are not in the hub (the `untis` MCP has them).
+- Timetable, exams and homework are MCP tools only (`server/school/timetable.py`, the former Go untis-mcp; same login and block, 5 min cache), not in the web UI.

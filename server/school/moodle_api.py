@@ -93,6 +93,12 @@ def _take(ids: list) -> list[tuple[str, Path]]:
     return out
 
 
+def drop_uploads(taken: list[tuple[str, Path]]) -> None:
+    for _, path in taken:
+        path.unlink(missing_ok=True)
+        path.with_suffix(".name").unlink(missing_ok=True)
+
+
 async def _save(a: dict, upload_ids: list, remove: set[str] | None, replace_files: bool, text: str | None) -> None:
     taken = _take(upload_ids)
     limit = int(md._config(a, "file", "maxsubmissionsizebytes") or 0)
@@ -596,6 +602,33 @@ async def upload_link_tool(name: str) -> str:
     return _json({"upload_id": uid, "url": url, "how": f"curl -sS -T <local file> '{url}'", "valid_minutes": LINK_SECONDS // 60})
 
 
+async def choice_tool(cmid: int, course_id: int = 0) -> str:
+    return _json(await md.choice(int(cmid), int(course_id or 0)))
+
+
+async def choose_tool(cmid: int, option_ids: list, course_id: int = 0) -> str:
+    await md.answer_choice(int(cmid), int(course_id or 0), [int(i) for i in option_ids or []])
+    return _json(await md.choice(int(cmid), int(course_id or 0)))
+
+
+async def publication_tool(cmid: int) -> str:
+    return _json(await md.publication(int(cmid)))
+
+
+async def publication_change_tool(cmid: int, uploads: list | None = None, remove: list | None = None) -> str:
+    if not uploads and not remove:
+        raise ValueError("nothing to do: give uploads or remove")
+    taken = _take(list(uploads or []))
+    files = [(name, path.open("rb")) for name, path in taken]
+    try:
+        await md.change_publication(int(cmid), files, {str(n) for n in remove or []})
+    finally:
+        for _, f in files:
+            f.close()
+    drop_uploads(taken)
+    return _json(await md.publication(int(cmid)))
+
+
 async def submit_assignment_tool(
     assignment_id: int,
     uploads: list | None = None,
@@ -680,6 +713,40 @@ TOOLS = {
         {"name": _STR},
         ["name"],
     ),
+    "upload_link": (
+        upload_link_tool,
+        "Step one of handing in a local file anywhere (Teams add_assignment_file, moodle_submit_assignment, "
+        "moodle_publication_change). Returns an upload_id and a link; send the file with curl -T <file> '<url>'. The upload waits "
+        "an hour at most.",
+        {"name": _STR},
+        ["name"],
+    ),
+    "moodle_choice": (
+        choice_tool,
+        "Moodle choice (vote) activity by cmid: options with ids, own pick (checked), counts, limits, who picked what when shown, "
+        "whether it can be answered.",
+        {"cmid": _INT, "course_id": _INT},
+        ["cmid"],
+    ),
+    "moodle_choose": (
+        choose_tool,
+        "Moodle choice: vote for option ids (one unless the choice allows several) for real. Only when the user said which option.",
+        {"cmid": _INT, "option_ids": {"type": "array", "items": _INT, "minItems": 1}, "course_id": _INT},
+        ["cmid", "option_ids"],
+    ),
+    "moodle_publication": (
+        publication_tool,
+        "Moodle publication (student files folder) by cmid: own files with approval state, everybody's published files, canUpload.",
+        {"cmid": _INT},
+        ["cmid"],
+    ),
+    "moodle_publication_change": (
+        publication_change_tool,
+        "Moodle publication: add uploaded files (upload ids from upload_link; same name replaces) and/or remove own files by name. "
+        "Visible to the whole course: only when the user asked for it.",
+        {"cmid": _INT, "uploads": {"type": "array", "items": _STR}, "remove": {"type": "array", "items": _STR}},
+        ["cmid"],
+    ),
     "moodle_submit_assignment": (
         submit_assignment_tool,
         "Moodle: change the own submission of an assignment: add uploaded files (upload ids from moodle_upload_link) and/or set "
@@ -697,4 +764,4 @@ TOOLS = {
         ["assignment_id"],
     ),
 }
-WRITES = {"moodle_upload_link", "moodle_submit_assignment"}
+WRITES = {"moodle_upload_link", "upload_link", "moodle_submit_assignment", "moodle_choose", "moodle_publication_change"}

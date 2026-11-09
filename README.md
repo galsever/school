@@ -1,6 +1,6 @@
 # School
 
-Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tailnet only, Pocket ID login): a fast Microsoft Teams client (chats, channels, meeting chats, teams, assignments), the school mail, the WebUntis absences with own reasons per day, the Entschuldigung PDF and attendance per subject (the former excuses app), and the school Moodle (courses, files, assignments with hand-in, grades). One MCP endpoint at `/api/mcp` for all of it.
+Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tailnet only, Pocket ID login): a fast Microsoft Teams client (chats, channels, meeting chats, teams, assignments), the school mail, the WebUntis absences with own reasons per day, the Entschuldigung PDF and attendance per subject (the former excuses app), and the school Moodle (courses, files, assignments with hand-in, grades). One MCP endpoint at `/api/mcp` for all of it, plus WebUntis timetable, exams and homework (docs/API.md).
 
 - Server: Python 3.12, FastAPI, httpx. Talks to Microsoft, WebUntis and Moodle directly, no browser, no app registration.
 - Website: React 19, TypeScript, Tailwind, shadcn/ui, TanStack Router / Query (same stack as earworm). Contract: [docs/API.md](docs/API.md).

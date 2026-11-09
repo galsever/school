@@ -100,8 +100,12 @@ The limits from the form (6 files, 50 MB each on *Themenvorstellung_Informatione
 | `moodle_read_file` | text of a file (PDF, Word, PowerPoint, OpenDocument, HTML, code), images as images, a signed `download_url` (15 min) |
 | `moodle_upload_link` | step one of a hand-in: an upload id and a signed link; send the file with `curl -T <file> '<url>'` |
 | `moodle_submit_assignment` | change the submission (upload ids, online text, `replace_files`), `finalize` submits for grading |
+| `moodle_choice` | a choice by cmid: options with ids, own pick, counts, names, `canAnswer` |
+| `moodle_choose` | vote for `option_ids` (real) |
+| `moodle_publication` | a publication by cmid: own files with approval state, published files |
+| `moodle_publication_change` | add upload ids (same name replaces) and/or `remove` own files by name |
 
-The hub cannot read the model's disk, hence the two steps for a hand-in. `moodle_upload_link` and `moodle_submit_assignment` are the only writing tools; choices and publications have no tools.
+The hub cannot read the model's disk, hence the two steps for a hand-in. Writing tools: `moodle_upload_link` (alias `upload_link`), `moodle_submit_assignment`, `moodle_choose`, `moodle_publication_change`; only on the owner's word.
 
 ## Data
 
