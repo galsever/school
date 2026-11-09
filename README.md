@@ -13,7 +13,7 @@ Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tai
 | Chats | 1:1 and group chats, meeting chats: read, send, unread state, desktop notifications, images full screen on click |
 | Teams | class teams with their channels, posts and files (Office files open as PDF), class assignments next to the main channel |
 | Assignments | all assignments by due date, instructions, material, own work: upload, turn in, undo |
-| Mail | school Outlook: inbox, sent, archive, search, read, attachments, reply, new mail. Details: [docs/MAIL.md](docs/MAIL.md) |
+| Mail | school Outlook: inbox, sent, archive, search, conversations shown like a chat, mails in their own look (darkened), reply, reply all, forward and new mail with formatting and attachments. Details: [docs/MAIL.md](docs/MAIL.md) |
 | Absences | WebUntis absences with own reasons per day, the Entschuldigung PDF, attendance per subject. Details: [docs/ABSENCES.md](docs/ABSENCES.md) |
 | Moodle | courses with their files (one click opens a file), search over all courses, assignments with upload and submit, grades |
 | Settings | Microsoft account, WebUntis login, Moodle login, notifications |

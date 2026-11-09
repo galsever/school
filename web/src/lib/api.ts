@@ -1,4 +1,4 @@
-import type { Mail, MailAddress, MailPage, Assignment, AssignmentDetail, ChannelFolder, Chat, DeviceLogin, Folder, MessagePage, MsStatus, Resource, Team } from './types'
+import type { MailAddress, MailFile, MailMode, MailPage, MailThread, Assignment, AssignmentDetail, ChannelFolder, Chat, DeviceLogin, Folder, MessagePage, MsStatus, Resource, Team } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -69,11 +69,12 @@ export const api = {
   teams: () => request<Team[]>('/api/teams'),
   mailList: (folder: string, q: string, cursor?: string) =>
     request<MailPage>(`/api/mail?folder=${folder}${q ? `&q=${enc(q)}` : ''}${cursor ? `&cursor=${enc(cursor)}` : ''}`),
-  mail: (id: string) => request<Mail>(`/api/mail/${enc(id)}`),
+  /** The whole conversation of a mail, oldest first. Marks its unread mails read. */
+  mailThread: (id: string) => request<MailThread>(`/api/mail/${enc(id)}/thread`),
   mailUnread: () => request<{ count: number }>('/api/mail/unread'),
   mailPeople: (q: string) => request<MailAddress[]>(`/api/mail/people?q=${enc(q)}`),
-  mailSend: (m: { to: string[]; cc: string[]; subject: string; text: string }) => post('/api/mail/send', m),
-  mailReply: (id: string, text: string, all: boolean) => post(`/api/mail/${enc(id)}/reply`, { text, all }),
+  mailCompose: (m: { mode: MailMode; id?: string; to: string[]; cc: string[]; subject: string; html: string; files: MailFile[] }) =>
+    post('/api/mail/compose', m),
   /** Own name (null = Microsoft's again) and hidden flag of a team or channel. */
   setPref: (id: string, p: { name?: string | null; hidden?: boolean }) =>
     request<void>(`/api/prefs/${enc(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) }),

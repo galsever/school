@@ -6,16 +6,26 @@ The Mail tab is the school Outlook mailbox through Graph, with the same sign-in 
 
 - **List**: Inbox, Sent, Archive, search (keeps the list on screen while it loads, X clears), unread dot, paperclip, date (time today, `dd.mm.` this year, `dd.mm.yy` older). 50 per page, more on scroll.
 - **Unread badge** on the Mail icon = unread count of the inbox (`/api/mail/unread`, every minute).
-- **Reading**: opening an unread mail marks it read on the server; the list dot and the badge update without a refetch. A click on the "To ..." line shows all recipients with their addresses.
+- **Conversation like a chat**: opening a mail shows its whole conversation (`/api/mail/{id}/thread`: every folder, so own replies from Sent are in it), oldest first, opened at the bottom. Own mails are on the right in the accent color, others on the left with their avatar, a day divider where the day changes. A click on a mail's header shows all addresses. Opening marks every unread mail of the conversation read; the list dots and the badge update without a refetch.
 - **Earlier mails collapse**: in a reply only the new text shows; a `···` button below it opens the quoted older mails. Forwards (subject `Fwd:`, `WG:`, `TR:`) stay open because the quote is the content, and so does a mail that is nothing but a quote.
-- **Images**: remote images are not loaded until "Show images" is clicked (a remote image tells the sender that and from where the mail was opened). Attachments and inline images of the mail itself always show.
-- **Reply / Reply all** below the mail (not in Sent). **New mail**: To and Cc with address suggestions (arrow keys, Enter picks, Tab moves on), and leaving a written mail asks "Discard this mail?".
+- **Own look, darkened**: every mail keeps the sender's styles, fonts, colors and layout and is shown darkened (see MailFrame below). The sun button per mail shows the original colors on white.
+- **Images**: remote images are not loaded until "Show images" is clicked (a remote image tells the sender that and from where the mail was opened). Attachments and inline images of the mail itself always show. Image attachments get a thumbnail, every file its size.
+- **Writing**: the bar at the bottom: Reply, Reply all (only when it reaches more people), Forward; keys `r`, `a`, `f`. The editor opens inline below the last mail of the conversation with To and Cc filled in (editable). A reply to an own mail goes to its recipients, like Outlook. Bold, italic, underline, lists, links (Ctrl+B/I/U work too), attachments by button, drop or paste (25 MB together). Ctrl+Enter sends, Esc or the bin discards (asks when something is written). **New mail** uses the same editor with a subject. Leaving a written mail asks "Discard this mail?". Everything goes through `/api/mail/compose` (API.md).
+
+## How a mail is rendered (MailFrame)
+
+`mailHtml(html, {images, collapse, styled: true})` keeps `style`, `class` and the color and font attributes and returns the sender's `<style>` blocks as `css` (without `@import`). That HTML is only ever put into `MailFrame` in `mail.tsx`, never into the page:
+
+- `<iframe srcdoc sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox">`: no `allow-scripts`, so nothing in it runs (DOMPurify removes scripts and handlers anyway). `allow-same-origin` is only there so the page can measure the height; links open in a new tab (`<base target="_blank">`).
+- A CSP meta in the frame: `default-src 'none'`, images only from our own routes and `data:` (plus `https:` after "Show images"), no remote fonts or CSS. Remote images in `style` or `background` are blocked by it too.
+- Dark: `body { filter: invert(1) hue-rotate(180deg) }` and the same filter again on `img`, `picture`, `video` and elements with a background image, so pictures look normal. Light backgrounds get dark, black text light, colors keep their hue. Outlook and Gmail do the same for HTML mail.
+- The iframe element and its document both have `color-scheme: light` (the page is dark; a mismatch would paint the frame white). Height follows the body with a ResizeObserver (late images, narrower pane); content wider than the pane scrolls sideways inside the frame.
 
 ## How a mail body is made safe and readable (`mailHtml`)
 
-Mail HTML is untrusted. `mailHtml(html, {images, collapse})` runs it through DOMPurify once and returns `{main, quoted, blocked}`:
+Mail HTML is untrusted. `mailHtml(html, {images, collapse})` runs it through DOMPurify once and returns `{main, quoted, blocked, css}`:
 
-1. **Sanitize** like chat messages (`safeHtml`): no `style`, `class`, `id`, forms, iframes, scripts. Mail also drops SVG, MathML, video, audio and `srcset`.
+1. **Sanitize** like chat messages (`safeHtml`; with `styled`, steps 1 and 2 keep `style`, `class` and the color and font attributes): no `style`, `class`, `id`, forms, iframes, scripts. Mail also drops SVG, MathML, video, audio and `srcset`.
 2. **Colors and fonts go**: `color`, `bgcolor`, `background`, `face`, `size` and the body link colors are removed. Outlook writes `<font color="#000000">`, which was black on the dark theme.
 3. **Hidden parts go**: an element whose inline style hides it (`display:none`, `visibility:hidden`, `mso-hide:all`, `opacity:0`, `max-height:0`) is removed. Because all styles are stripped, newsletter preheaders would show otherwise.
 4. **Images**: `src` must be an attachment route of the app or a `data:` URL. Remote images are removed and counted in `blocked` unless `images` is true. Leftover `cid:` images are removed.
@@ -62,5 +72,7 @@ In the live site, check with Claude in Chrome and open only mails that are alrea
 ## Not done
 
 - Empty gaps inside quoted Outlook replies.
-- No Unread filter chip, no delete, archive, move or flag, no drafts.
+- No Unread filter chip, no delete, archive, move or flag, no drafts (an unsent text is lost when the page is closed).
+- The list stays one row per mail (conversations are only grouped when a mail is opened).
+- `send_mail` and `reply_mail` of the MCP still send plain text.
 - The inbox badge counts every unread mail (about 1460 in November 2026, so it shows 99+).

@@ -109,3 +109,6 @@
 .tm-mail table { max-width: 100%; }
 .tm-mail table[border]:not([border="0"]) > * > tr > :is(td, th) { border: 1px solid var(--border); padding: 0.25rem 0.5rem; }
 .tm-mail img { height: auto; max-height: none; border-radius: 0; }
+/* Mail editor: placeholder while empty */
+.tm-editor.tm-empty::before { content: attr(data-placeholder); position: absolute; color: var(--muted-foreground); pointer-events: none; }
+.tm-editor img { max-height: 240px; cursor: default; }

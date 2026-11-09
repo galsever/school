@@ -70,15 +70,16 @@ Team and channel: `{id, name, original, hidden}`.
 | GET | `/api/mail?folder=inbox\|sent\|archive&q=&unread=&cursor=` | `{messages: MailSummary[], cursor}` newest first, 50 per page. `q` searches (as one phrase; quotes and backslashes are dropped), `unread=true` only unread |
 | GET | `/api/mail/unread` | `{count}` unread in the inbox |
 | GET | `/api/mail/{id}` | `Mail`: summary plus `cc`, `html`, `files`. **Marks the mail read.** `read` is the state before opening |
+| GET | `/api/mail/{id}/thread` | `{subject, messages: Mail[]}`: the whole conversation of the mail in every folder (Inbox, Sent, Archive, ...), oldest first, at most 30. Drafts and deleted mails are left out, the mail itself is always in. **Marks its unread mails read**; each `read` is the state before |
 | GET | `/api/mail/{id}/attachments/{aid}?download=` | the attachment (images, PDF, plain text inline, rest as download) |
 | GET | `/api/mail/{id}/attachments/{aid}/parts/{n}` | a file from inside an S/MIME signed mail, same rules |
-| POST | `/api/mail/send` | `{to[], cc[], subject, text}` -> 204, saved to Sent |
-| POST | `/api/mail/{id}/reply` | `{text, all}` -> 204 |
+| POST | `/api/mail/compose` | `{mode: new\|reply\|replyAll\|forward, id?, to[], cc[], subject, html, files[]}` -> 204, saved to Sent. `id` = the mail answered or forwarded (not for `new`). `files[]`: `{name, type, data}` (`data` base64), together at most 25 MB. Replaced `/api/mail/send` and `/api/mail/{id}/reply` |
 | GET | `/api/mail/people?q=` | address suggestions `{name, address}[]` (school directory and people you mailed), from 2 characters |
 
 - `html` is Microsoft's HTML and untrusted: the website renders it only through `mailHtml` ([MAIL.md](MAIL.md)). Inline images (`cid:`) are already rewritten to the attachment routes.
 - `files[]`: `{id, name, size, type, url}`; open `url`, do not build the path yourself (files of signed mails live under `/parts/{n}`).
-- `text` of send and reply is plain text, sent as HTML paragraphs.
+- `compose`: `html` is the own text as HTML (the website's editor). Replies and forwards go through an Outlook draft (`createReply`, `createReplyAll`, `createForward`): Outlook adds the quoted mail below the own text and, for a forward, the original attachments. Recipients always come from the request, also for replies (`subject` empty = Outlook's `RE:`/`WG:` subject). If anything fails after the draft was made, the draft is deleted. `html` may be empty for a forward or a mail with attachments.
+- The MCP tools `send_mail` and `reply_mail` still take plain text (`mail.send`, `mail.reply`).
 
 ## Absences (WebUntis)
 

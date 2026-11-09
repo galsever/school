@@ -31,7 +31,7 @@ export const q = {
       placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === folder ? prev : undefined),
     }),
   mailUnread: () => queryOptions({ queryKey: ['mail-unread'], queryFn: api.mailUnread, refetchInterval: 60_000 }),
-  mail: (id: string) => queryOptions({ queryKey: ['mail-item', id], queryFn: () => api.mail(id), staleTime: 5 * 60_000 }),
+  mailThread: (id: string) => queryOptions({ queryKey: ['mail-thread', id], queryFn: () => api.mailThread(id), staleTime: 5 * 60_000 }),
   assignments: () => queryOptions({ queryKey: ['assignments'], queryFn: api.assignments, staleTime: 5 * 60_000 }),
   assignment: (classId: string, id: string) =>
     queryOptions({ queryKey: ['assignment', classId, id], queryFn: () => api.assignment(classId, id) }),

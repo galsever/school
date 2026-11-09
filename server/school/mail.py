@@ -1,5 +1,7 @@
 """School Outlook mail through Graph with the same login (Mail.ReadWrite, Mail.Send are in the Teams client's token)."""
 
+import asyncio
+import base64
 import email
 import email.policy
 import re
@@ -99,15 +101,12 @@ async def signed_parts(mid: str, aid: str) -> list[dict]:
     return parts
 
 
-async def get_mail(mid: str, mark_read: bool = True) -> dict:
-    m = (
-        await _req(
-            "GET",
-            f"/me/messages/{mid}?$select={LIST_FIELDS},ccRecipients,body",
-            headers={"Prefer": 'outlook.body-content-type="html"'},
-        )
-    ).json()
+async def _with_files(m: dict, mark_read: bool) -> dict:
+    """Summary plus cc, html and files of a Graph message that was read with its body."""
+    mid = m["id"]
     body = (m.get("body") or {}).get("content", "")
+    if (m.get("body") or {}).get("contentType") == "text":
+        body = _html(body)
     atts = []
     if m.get("hasAttachments") or "cid:" in body:
         atts = (
@@ -151,6 +150,48 @@ async def get_mail(mid: str, mark_read: bool = True) -> dict:
     return out
 
 
+FULL_FIELDS = f"{LIST_FIELDS},ccRecipients,body"
+HTML = {"Prefer": 'outlook.body-content-type="html"'}
+
+
+async def get_mail(mid: str, mark_read: bool = True) -> dict:
+    m = (await _req("GET", f"/me/messages/{mid}?$select={FULL_FIELDS}", headers=HTML)).json()
+    return await _with_files(m, mark_read)
+
+
+_skip_folders: list[str] = []
+
+
+async def _skipped_folders() -> list[str]:
+    """Ids of Deleted Items and Drafts: mails there are not part of a conversation view."""
+    if not _skip_folders:
+        for f in ("deleteditems", "drafts"):
+            try:
+                _skip_folders.append((await _req("GET", f"/me/mailFolders/{f}?$select=id")).json()["id"])
+            except Upstream:
+                pass
+    return _skip_folders
+
+
+async def thread(mid: str, mark_read: bool = True) -> dict:
+    """All mails of the conversation of `mid` in every folder (Inbox, Sent, Archive, ...), oldest first.
+    Drafts and deleted mails are left out, the opened mail is always in. Unread ones are marked read."""
+    first = (await _req("GET", f"/me/messages/{mid}?$select=conversationId,subject")).json()
+    cid = first.get("conversationId") or ""
+    msgs: list[dict] = []
+    if cid:
+        flt = quote(f"conversationId eq '{cid.replace(chr(39), chr(39) * 2)}'")
+        d = (await _req("GET", f"/me/messages?$filter={flt}&$top=40&$select={FULL_FIELDS},parentFolderId,isDraft", headers=HTML)).json()
+        skip = await _skipped_folders()
+        msgs = [m for m in d.get("value", []) if m["id"] == mid or (not m.get("isDraft") and m.get("parentFolderId") not in skip)]
+    if not any(m["id"] == mid for m in msgs):
+        msgs.append((await _req("GET", f"/me/messages/{mid}?$select={FULL_FIELDS}", headers=HTML)).json())
+    msgs.sort(key=lambda m: m.get("receivedDateTime") or m.get("sentDateTime") or "")
+    msgs = msgs[-30:]
+    out = await asyncio.gather(*(_with_files(m, mark_read) for m in msgs))
+    return {"subject": first.get("subject") or "", "messages": list(out)}
+
+
 async def attachment(mid: str, aid: str) -> tuple[bytes, str, str]:
     meta = (await _req("GET", f"/me/messages/{mid}/attachments/{aid}?$select=name,contentType")).json()
     data = (await _req("GET", f"/me/messages/{mid}/attachments/{aid}/$value")).content
@@ -187,6 +228,67 @@ async def send(to: list[str], subject: str, text: str, cc: list[str] | None = No
 
 async def reply(mid: str, text: str, reply_all: bool = False) -> None:
     await _req("POST", f"/me/messages/{mid}/{'replyAll' if reply_all else 'reply'}", json={"comment": _html(text)})
+
+
+MAX_FILES = 25 << 20  # all attachments of one mail together (Outlook's limit for school accounts is about this)
+SMALL = 3 << 20  # larger attachments go through an upload session
+CHUNK = 12 * 320 * 1024  # upload session chunks must be multiples of 320 KiB
+MODES = {"new": None, "reply": "createReply", "replyAll": "createReplyAll", "forward": "createForward"}
+
+
+async def _attach(draft: str, f: dict) -> None:
+    name, ctype, data = f["name"], f["type"], f["data"]
+    if len(data) <= SMALL:
+        a = {"@odata.type": "#microsoft.graph.fileAttachment", "name": name, "contentType": ctype, "contentBytes": base64.b64encode(data).decode()}
+        await _req("POST", f"/me/messages/{draft}/attachments", json=a)
+        return
+    item = {"AttachmentItem": {"attachmentType": "file", "name": name, "size": len(data), "contentType": ctype}}
+    url = (await _req("POST", f"/me/messages/{draft}/attachments/createUploadSession", json=item)).json()["uploadUrl"]
+    for start in range(0, len(data), CHUNK):
+        part = data[start : start + CHUNK]
+        rng = f"bytes {start}-{start + len(part) - 1}/{len(data)}"
+        # the upload URL carries its own token: no Authorization header
+        _check(await session.http.put(url, content=part, headers={"Content-Range": rng, "Content-Type": "application/octet-stream"}, timeout=120))
+
+
+def _prepend(own: str, draft_html: str) -> str:
+    """Own text in front of the quoted mail Outlook put into a reply or forward draft."""
+    m = re.search(r"<body[^>]*>", draft_html, re.I)
+    return draft_html[: m.end()] + own + draft_html[m.end() :] if m else own + draft_html
+
+
+async def compose(mode: str, mid: str | None, to: list[str], cc: list[str], subject: str, html: str, files: list[dict]) -> None:
+    """New mail, reply, reply all or forward, as HTML with attachments.
+    Goes through a draft (Outlook adds the quote and, for forwards, the original attachments) and sends it.
+    Recipients always come from the caller, also for replies (a reply to an own sent mail goes to its recipients)."""
+    if mode not in MODES or (mode != "new") != bool(mid):
+        raise Upstream(400, "bad mode")
+    if not to:
+        raise Upstream(400, "no recipient")
+    if sum(len(f["data"]) for f in files) > MAX_FILES:
+        raise Upstream(400, f"attachments larger than {MAX_FILES >> 20} MB")
+    rcpt = {"toRecipients": _recipients(to), "ccRecipients": _recipients(cc)}
+    if mode == "new":
+        draft = (await _req("POST", "/me/messages", json={"subject": subject, "body": {"contentType": "HTML", "content": html}, **rcpt})).json()
+    else:
+        draft = (await _req("POST", f"/me/messages/{mid}/{MODES[mode]}", json={}, headers=HTML)).json()
+        quoted = (draft.get("body") or {}).get("content", "")
+        if (draft.get("body") or {}).get("contentType") == "text":
+            quoted = _html(quoted)
+        patch = {"body": {"contentType": "HTML", "content": _prepend(html, quoted)}, **rcpt}
+        if subject:
+            patch["subject"] = subject
+        await _req("PATCH", f"/me/messages/{draft['id']}", json=patch)
+    try:
+        for f in files:
+            await _attach(draft["id"], f)
+        await _req("POST", f"/me/messages/{draft['id']}/send")
+    except Exception:
+        try:  # no half-made draft left behind in Outlook
+            await _req("DELETE", f"/me/messages/{draft['id']}")
+        except Exception:
+            pass
+        raise
 
 
 async def search_people(q: str) -> list[dict]:

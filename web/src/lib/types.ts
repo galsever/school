@@ -104,6 +104,9 @@ export type MailSummary = {
   flagged: boolean
 }
 export type MailPage = { messages: MailSummary[]; cursor: string | null }
+export type MailThread = { subject: string; messages: Mail[] }
+export type MailMode = 'new' | 'reply' | 'replyAll' | 'forward'
+export type MailFile = { name: string; type: string; data: string }
 export type MailFolder = 'inbox' | 'sent' | 'archive'
 export type Mail = MailSummary & {
   cc: MailAddress[]

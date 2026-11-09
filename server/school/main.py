@@ -292,14 +292,28 @@ async def mail_people(q: str):
     return await mail.search_people(q) if len(q.strip()) >= 2 else []
 
 
-@app.post("/api/mail/send", dependencies=guard)
-async def mail_send(payload: dict = Body(...)):
+@app.post("/api/mail/compose", dependencies=guard)
+async def mail_compose(payload: dict = Body(...)):
+    """New mail, reply, reply all or forward with HTML text and attachments (docs/API.md)."""
+    import base64
+    import binascii
+
+    mode = str(payload.get("mode") or "new")
+    mid = payload.get("id") or None
+    if mid is not None:
+        _mid(str(mid))
     to = [str(a) for a in payload.get("to") or []]
     cc = [str(a) for a in payload.get("cc") or []]
-    text = str(payload.get("text", "")).strip()
-    if not to or not text:
+    html = str(payload.get("html", "")).strip()
+    files = []
+    try:
+        for f in payload.get("files") or []:
+            files.append({"name": str(f["name"])[:200] or "file", "type": str(f.get("type") or "application/octet-stream"), "data": base64.b64decode(f["data"], validate=True)})
+    except (KeyError, TypeError, binascii.Error):
+        raise HTTPException(400, {"error": "bad_file", "detail": "Bad attachment"})
+    if not to or (not html and not files and mode != "forward"):
         raise HTTPException(400, {"error": "bad_mail", "detail": "Recipient and text needed"})
-    await mail.send(to, str(payload.get("subject", ""))[:300], text, cc)
+    await mail.compose(mode, mid, to, cc, str(payload.get("subject", ""))[:300], html, files)
     return Response(status_code=204)
 
 
@@ -309,14 +323,10 @@ async def mail_get(mid: str):
     return await mail.get_mail(mid)
 
 
-@app.post("/api/mail/{mid}/reply", dependencies=guard)
-async def mail_reply(mid: str, payload: dict = Body(...)):
+@app.get("/api/mail/{mid}/thread", dependencies=guard)
+async def mail_thread(mid: str):
     _mid(mid)
-    text = str(payload.get("text", "")).strip()
-    if not text:
-        raise HTTPException(400, {"error": "bad_mail", "detail": "Empty text"})
-    await mail.reply(mid, text, bool(payload.get("all")))
-    return Response(status_code=204)
+    return await mail.thread(mid)
 
 
 @app.get("/api/mail/{mid}/attachments/{aid}/parts/{n}", dependencies=guard)

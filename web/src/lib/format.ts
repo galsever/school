@@ -108,11 +108,27 @@ function trimEnd(root: Node) {
   }
 }
 
+/** The sender's <style> blocks, for a mail that keeps its own look (rendered only inside the sandboxed MailFrame). */
+function mailCss(html: string): string {
+  if (!/<style/i.test(html)) return ''
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  return [...doc.querySelectorAll('style')]
+    .map((s) => s.textContent ?? '')
+    .join('\n')
+    .replace(/<\/?style/gi, '')
+    .replace(/@import[^;]*;?/gi, '')
+}
+
 /**
  * A mail body, sanitized like safeHtml and also: remote images only with `images` (`blocked` counts the hidden ones),
  * hidden preheaders removed, and with `collapse` the quoted older mails split off into `quoted`.
+ * With `styled` the sender's look stays (style, class, colors, fonts; `css` = its style blocks): only for MailFrame,
+ * which renders it in a sandboxed frame with a CSP, never in the page itself.
  */
-export function mailHtml(html: string, opts: { images: boolean; collapse: boolean }): { main: string; quoted: string; blocked: number } {
+export function mailHtml(
+  html: string,
+  opts: { images: boolean; collapse: boolean; styled?: boolean },
+): { main: string; quoted: string; blocked: number; css: string } {
   mail = { images: opts.images, blocked: 0, quote: !opts.collapse }
   let frag: DocumentFragment
   let blocked: number
@@ -120,7 +136,7 @@ export function mailHtml(html: string, opts: { images: boolean; collapse: boolea
     frag = DOMPurify.sanitize(html, {
       USE_PROFILES: { html: true },
       FORBID_TAGS: [...FORBID_TAGS, 'video', 'audio', 'source', 'track'],
-      FORBID_ATTR: [...FORBID_ATTR, 'srcset'],
+      FORBID_ATTR: opts.styled ? ['id', 'srcset'] : [...FORBID_ATTR, 'srcset'],
       RETURN_DOM_FRAGMENT: true,
     })
     blocked = mail.blocked
@@ -147,7 +163,23 @@ export function mailHtml(html: string, opts: { images: boolean; collapse: boolea
       quoted = text(rest)
     } else frag.appendChild(rest) // nothing but the quote (a forward without a comment): show it
   }
-  return { main: text(frag), quoted, blocked }
+  return { main: text(frag), quoted, blocked, css: opts.styled ? mailCss(html) : '' }
+}
+
+/** 1.2 MB, 340 KB */
+export function fileSize(n?: number | null): string {
+  if (!n) return ''
+  return n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
+}
+
+const dayFull = new Intl.DateTimeFormat('de-AT', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
+const dayShort = new Intl.DateTimeFormat('de-AT', { weekday: 'long', day: '2-digit', month: '2-digit' })
+
+/** Day divider in a conversation: "Montag, 08.11." (year when it is not this year). */
+export function dayLabel(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return (d.getFullYear() === new Date().getFullYear() ? dayShort : dayFull).format(d)
 }
 
 export function initials(name: string): string {
