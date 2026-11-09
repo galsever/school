@@ -61,6 +61,7 @@ const teamsIndexRoute = createRoute({
 const channelRoute = createRoute({
   getParentRoute: () => teamsRoute,
   path: '$id',
+  validateSearch: (s: Record<string, unknown>): { tab?: 'files' } => (s.tab === 'files' ? { tab: 'files' } : {}),
   component: lazyRouteComponent(() => import('@/routes/conversation'), 'ChannelPage'),
 })
 

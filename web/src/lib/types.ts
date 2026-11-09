@@ -75,3 +75,16 @@ export type AssignmentDetail = Assignment & {
     points: number | null
   }
 }
+
+export type DriveItem = {
+  id: string
+  name: string
+  folder: boolean
+  count: number | null
+  size: number | null
+  modified: string | null
+  webUrl: string | null
+}
+
+export type Folder = { items: DriveItem[] }
+export type ChannelFolder = Folder & { drive: string; id: string; name: string; webUrl: string | null }

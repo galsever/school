@@ -371,6 +371,71 @@ async def teams() -> list[dict]:
     return out
 
 
+# ---- files (SharePoint document library of a team) ------------------------------
+
+DRIVE_ID = re.compile(r"^[A-Za-z0-9!_\-]{1,200}$")
+# Office formats Graph converts to PDF, so they open in the browser without SharePoint
+TO_PDF = {"doc", "docx", "ppt", "pptx", "pps", "ppsx", "xls", "xlsx", "odt", "odp", "ods", "rtf"}
+INLINE = ("application/pdf", "image/", "text/plain", "video/", "audio/")
+
+
+def _item(x: dict) -> dict:
+    return {
+        "id": x["id"],
+        "name": x.get("name", ""),
+        "folder": "folder" in x,
+        "count": (x.get("folder") or {}).get("childCount"),
+        "size": x.get("size"),
+        "modified": x.get("lastModifiedDateTime"),
+        "webUrl": x.get("webUrl"),
+    }
+
+
+async def channel_folder(team_id: str, channel_id: str) -> dict:
+    f = await _graph(f"/teams/{team_id}/channels/{channel_id}/filesFolder")
+    drive = f["parentReference"]["driveId"]
+    return {"drive": drive, "id": f["id"], "name": f.get("name", ""), "webUrl": f.get("webUrl"), **await folder(drive, f["id"])}
+
+
+async def folder(drive: str, item: str) -> dict:
+    items, path = [], f"/drives/{drive}/items/{item}/children?$top=500&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file"
+    while path:
+        d = await _graph(path)
+        items += [_item(x) for x in d.get("value", [])]
+        nxt = d.get("@odata.nextLink")
+        path = nxt[len(GRAPH_URL):] if nxt and nxt.startswith(GRAPH_URL) else None
+    items.sort(key=lambda x: (not x["folder"], x["name"].lower()))
+    return {"items": items}
+
+
+async def file_stream(drive: str, item: str):
+    """(name, media type, inline?, async byte iterator) for viewing a file in the browser."""
+    meta = await _graph(f"/drives/{drive}/items/{item}?$select=name,file")
+    name = meta.get("name", "file")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    mime = (meta.get("file") or {}).get("mimeType") or "application/octet-stream"
+    url = f"{GRAPH_URL}/drives/{drive}/items/{item}/content"
+    if ext in TO_PDF:
+        url += "?format=pdf"
+        mime, name = "application/pdf", name.rsplit(".", 1)[0] + ".pdf"
+    tok = await session.token(GRAPH)
+    req = session.http.build_request("GET", url, headers={"Authorization": f"Bearer {tok}"}, timeout=120)
+    resp = await session.http.send(req, stream=True, follow_redirects=True)
+    if resp.status_code >= 400:
+        await resp.aclose()
+        raise Upstream(resp.status_code, "download failed")
+
+    async def body():
+        try:
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+        finally:
+            await resp.aclose()
+
+    # SVG can carry scripts: never rendered on our origin
+    return name, mime, mime.startswith(INLINE) and "svg" not in mime, body()
+
+
 # ---- assignments -----------------------------------------------------------
 
 async def _class_names() -> dict[str, str]:

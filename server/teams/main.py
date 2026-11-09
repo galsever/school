@@ -6,7 +6,7 @@ import time
 from urllib.parse import urlencode
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from . import auth, config, upstream
 from .ms import NotConnected, session
@@ -154,6 +154,41 @@ async def media(url: str):
 @app.get("/api/teams", dependencies=guard)
 async def teams():
     return await upstream.teams()
+
+
+def _ids(*ids: str) -> None:
+    if not all(upstream.DRIVE_ID.match(i) for i in ids):
+        raise HTTPException(400, {"error": "bad_id", "detail": "Bad id"})
+
+
+@app.get("/api/teams/{team_id}/channels/{channel_id}/files", dependencies=guard)
+async def channel_files(team_id: str, channel_id: str):
+    return await upstream.channel_folder(team_id, channel_id)
+
+
+@app.get("/api/drives/{drive}/items/{item}/children", dependencies=guard)
+async def folder(drive: str, item: str):
+    _ids(drive, item)
+    return await upstream.folder(drive, item)
+
+
+@app.get("/api/drives/{drive}/items/{item}/view", dependencies=guard)
+async def view_file(drive: str, item: str, download: bool = False):
+    """Streams the file: PDFs, images, text inline; Office files converted to PDF; the rest as download."""
+    _ids(drive, item)
+    from urllib.parse import quote
+
+    name, mime, inline, body = await upstream.file_stream(drive, item)
+    disposition = "inline" if inline and not download else "attachment"
+    return StreamingResponse(
+        body,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(name)}",
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/assignments", dependencies=guard)

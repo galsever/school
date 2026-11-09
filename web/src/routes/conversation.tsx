@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from '@tanstack/react-router'
+import { Link, useParams, useSearch } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, ExternalLink, FileText, Loader2, SendHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { api, errorText } from '@/lib/api'
+import { ChannelFiles } from '@/routes/files'
 import { longTime, safeHtml, shortTime } from '@/lib/format'
 import { q, queryClient } from '@/lib/query'
 import type { Card, Message, MessageFile } from '@/lib/types'
@@ -21,10 +22,21 @@ export function ConversationPage() {
 
 export function ChannelPage() {
   const { id } = useParams({ from: '/shell/teams/$id' })
-  return <Conversation id={id} back="/teams" />
+  const { tab } = useSearch({ from: '/shell/teams/$id' })
+  const teams = useQuery(q.teams())
+  const teamId = teams.data?.find((t) => t.channels.some((c) => c.id === id))?.id
+  return <Conversation id={id} back="/teams" channelTab={{ teamId, files: tab === 'files' }} />
 }
 
-function Conversation({ id, back }: { id: string; back: '/chats' | '/teams' }) {
+function Conversation({
+  id,
+  back,
+  channelTab,
+}: {
+  id: string
+  back: '/chats' | '/teams'
+  channelTab?: { teamId?: string; files: boolean }
+}) {
   const chats = useQuery(q.chats())
   const teams = useQuery({ ...q.teams(), enabled: !!chats.data && !chats.data.some((c) => c.id === id) })
   const chat = chats.data?.find((c) => c.id === id)
@@ -112,8 +124,40 @@ function Conversation({ id, back }: { id: string; back: '/chats' | '/teams' }) {
           <ArrowLeft className="size-5" />
         </Link>
         {title && <Avatar name={title} kind={kind} className="size-8 text-xs" />}
-        <h1 className="truncate font-semibold">{title}</h1>
+        <h1 className="min-w-0 flex-1 truncate font-semibold">{title}</h1>
+        {channelTab && (
+          <div className="flex shrink-0 rounded-lg bg-secondary p-0.5 text-sm">
+            {(['Posts', 'Files'] as const).map((label) => {
+              const active = (label === 'Files') === channelTab.files
+              return (
+                <Link
+                  key={label}
+                  to="/teams/$id"
+                  params={{ id }}
+                  search={label === 'Files' ? { tab: 'files' } : {}}
+                  replace
+                  className={cn(
+                    'rounded-md px-3 py-1 transition-colors',
+                    active ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {label}
+                </Link>
+              )
+            })}
+          </div>
+        )}
       </header>
+      {channelTab?.files ? (
+        channelTab.teamId ? (
+          <ChannelFiles teamId={channelTab.teamId} channelId={id} />
+        ) : (
+          <div className="p-6">
+            <Skeleton className="h-10 rounded-lg" />
+          </div>
+        )
+      ) : (
+        <>
       <div className="tm-scroll flex min-h-0 flex-1 flex-col-reverse overflow-y-auto px-3 py-3 md:px-6">
         <div className="flex flex-col">
           {nextCursor && (
@@ -135,6 +179,8 @@ function Conversation({ id, back }: { id: string; back: '/chats' | '/teams' }) {
         </div>
       </div>
       <Composer onSend={send} key={id} />
+        </>
+      )}
     </div>
   )
 }

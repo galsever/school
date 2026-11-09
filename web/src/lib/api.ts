@@ -1,4 +1,4 @@
-import type { Assignment, AssignmentDetail, Chat, DeviceLogin, MessagePage, MsStatus, Resource, Team } from './types'
+import type { Assignment, AssignmentDetail, ChannelFolder, Chat, DeviceLogin, Folder, MessagePage, MsStatus, Resource, Team } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -67,6 +67,9 @@ export const api = {
   send: (id: string, text: string) => post<{ id: string; clientId: string }>(`/api/chats/${enc(id)}/messages`, { text }),
   markRead: (id: string, messageId: string) => post(`/api/chats/${enc(id)}/read`, { messageId }),
   teams: () => request<Team[]>('/api/teams'),
+  channelFiles: (teamId: string, channelId: string) =>
+    request<ChannelFolder>(`/api/teams/${enc(teamId)}/channels/${enc(channelId)}/files`),
+  folder: (drive: string, item: string) => request<Folder>(`/api/drives/${enc(drive)}/items/${enc(item)}/children`),
   assignments: () => request<Assignment[]>('/api/assignments'),
   assignment: (classId: string, id: string) => request<AssignmentDetail>(`/api/assignments/${enc(classId)}/${enc(id)}`),
   uploadWork: (classId: string, id: string, file: File) =>
