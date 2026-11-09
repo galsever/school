@@ -349,9 +349,48 @@ def test_publication(fake, monkeypatch):
     monkeypatch.setattr(md, "web", web)
     p = run(md.publication(9))
     assert pages == ["/mod/publication/view.php?id=9&page=0", "/mod/publication/view.php?id=9&page=1"]
-    assert p["canUpload"] and p["own"] == [{"id": 11, "name": "Mine.pdf"}]
+    assert p["canUpload"] and p["own"] == [{"id": 11, "name": "Mine.pdf", "state": ""}]
     assert p["files"][0] == {"id": 12, "name": "Theirs & co.zip", "modified": "Wednesday, 4 November 2026, 11:21 AM", "by": "Max Muster"}
     assert len(p["files"]) == 2
+
+
+VIEW = """<form action="x"><input name="id" type="hidden" value="9" /><input name="sesskey" type="hidden" value="SK" />
+<input type="submit" class="btn" name="gotoupload" value="Edit/upload files"></form>"""
+UPLOAD = """<form action="upload.php"><input name="id" type="hidden" value="7" /><input name="cmid" type="hidden" value="9" />
+<input name="sesskey" type="hidden" value="SK" /><input name="_qf__mod_publication_upload_form" type="hidden" value="1" />
+<input value="555" name="attachment_filemanager" type="hidden" id="id_attachment_filemanager" /></form>
+<a href="x?maxbytes=1000&amp;maxfiles=2&amp;ctx=1">
+<script>M.form_filemanager.init(Y, {"list":[{"filename":"old.pdf","filepath":"\\/","size":"3"}]});</script>"""
+
+
+def test_change_publication(fake, monkeypatch):
+    sent = []
+
+    async def web(path, stream=False, data=None):
+        sent.append((path, data))
+        if path.startswith("/mod/publication/view.php?id="):
+            return httpx.Response(200, text=VIEW, request=httpx.Request("GET", "https://moodle.test" + path))
+        if path == "/mod/publication/view.php":
+            return httpx.Response(200, text=UPLOAD, request=httpx.Request("GET", "https://moodle.test/mod/publication/upload.php?id=7"))
+        if path.startswith("/repository/draftfiles_ajax.php"):
+            return httpx.Response(200, json=True, request=httpx.Request("POST", "https://moodle.test" + path))
+        return httpx.Response(200, text="ok", request=httpx.Request("GET", "https://moodle.test/mod/publication/view.php?id=9"))
+
+    monkeypatch.setattr(md, "web", web)
+    fields, form = run(md._upload_form(9))
+    assert form == {"itemid": 555, "maxfiles": 2, "maxbytes": 1000, "files": ["old.pdf"]}
+    assert fields["sesskey"] == "SK" and fields["attachment_filemanager"] == "555" and fields["cmid"] == "9"
+    with pytest.raises(md.MoodleError):
+        run(md.change_publication(9, [("a", b"1"), ("b", b"2")]))  # 1 kept + 2 new > 2
+    with pytest.raises(md.MoodleError):
+        run(md.change_publication(9, [("big", b"x" * 2000)]))
+    sent.clear()
+    run(md.change_publication(9, [("old.pdf", b"NEW")]))
+    # same name: removed from the draft first, uploaded into the same draft, then the form is saved
+    assert [p for p, _ in sent] == ["/mod/publication/view.php?id=9", "/mod/publication/view.php", "/repository/draftfiles_ajax.php?action=delete", "/mod/publication/upload.php"]
+    assert sent[2][1] == {"sesskey": "SK", "itemid": 555, "filepath": "/", "filename": "old.pdf"}
+    assert sent[3][1]["submitbutton"] == "Save changes" and sent[3][1]["attachment_filemanager"] == "555"
+    assert fake.uploads == [("555", "old.pdf", b"NEW")]
 
 
 def test_office_text():

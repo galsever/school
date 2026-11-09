@@ -104,7 +104,7 @@ export type MoodleChoice = {
 }
 export type MoodlePublication = {
   cmid: number
-  own: { id: number; name: string }[]
+  own: { id: number; name: string; state: string }[]
   files: { id: number; name: string; modified: string; by: string }[]
   canUpload: boolean
 }
@@ -121,6 +121,7 @@ export const moodleApi = {
   grades: (id: number) => request<MoodleGrade[]>(`${base}/courses/${id}/grades`),
   assignment: (cmid: number, course: number) => request<MoodleAssignment>(`${base}/assignments/${cmid}?course=${course}`),
   publication: (cmid: number) => request<MoodlePublication>(`${base}/publications/${cmid}`),
+  changePublication: (cmid: number, change: { add?: string[]; remove?: string[] }) => post<MoodlePublication>(`${base}/publications/${cmid}`, change),
   choice: (cmid: number, course: number) => request<MoodleChoice>(`${base}/choices/${cmid}?course=${course}`),
   answerChoice: (cmid: number, course: number, options: number[]) => post<MoodleChoice>(`${base}/choices/${cmid}?course=${course}`, { options }),
   page: (url: string) => request<{ html: string }>(`${base}/page?url=${enc(url)}`),

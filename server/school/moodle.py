@@ -675,8 +675,8 @@ async def _web_login(login: dict) -> httpx.AsyncClient:
     return c
 
 
-async def web(path: str, stream: bool = False) -> httpx.Response:
-    """GET a page or file of the Moodle website with the session; logs in again once when the session ran out."""
+async def web(path: str, stream: bool = False, data: dict | None = None) -> httpx.Response:
+    """GET (or with data POST) a page of the Moodle website with the session; logs in again once when it ran out."""
     global _web_client
     login = load_login()
     if not login:
@@ -687,7 +687,8 @@ async def web(path: str, stream: bool = False) -> httpx.Response:
                 _web_client = await _web_login(login)
             c = _web_client
         try:
-            r = await c.send(c.build_request("GET", login["url"] + path), stream=stream, follow_redirects=True)
+            method = "POST" if data is not None else "GET"
+            r = await c.send(c.build_request(method, login["url"] + path, data=data), stream=stream, follow_redirects=True)
         except httpx.HTTPError as e:
             raise MoodleError(f"Moodle does not answer: {e or type(e).__name__}", "network") from None
         if "/login/" not in r.url.path:
@@ -718,7 +719,12 @@ async def publication(cmid: int) -> dict:
         if page == 0:
             box = h[h.find('id="id_myfilescontainer"'):]
             box = box[: box.find("</table>")]
-            own = [{"id": int(i), "name": _cell(n)} for i, n in _FILE_LINK.findall(box)]
+            own = []
+            for part in box.split("<a href=")[1:]:
+                link = _FILE_LINK.search("<a href=" + part)
+                if link:
+                    state = re.search(r'title="([^"]+)" role="img"', part)
+                    own.append({"id": int(link.group(1)), "name": _cell(link.group(2)), "state": plain(state.group(1)) if state else ""})
             can_upload = 'value="Edit/upload files"' in h or "Edit/upload" in h
         table = h[h.find('class="flexible table table-striped table-hover publications"'):]
         table = table[: table.find("</table>")]
@@ -732,6 +738,91 @@ async def publication(cmid: int) -> dict:
             break
         page += 1
     return {"cmid": cmid, "own": own, "files": files, "canUpload": can_upload}
+
+
+_HIDDEN = re.compile(r'<input name="([^"]+)" type="hidden" value="([^"]*)"')
+
+
+async def _upload_form(cmid: int) -> tuple[dict, dict]:
+    """Opens the publication's own Edit/upload form: (its fields, {itemid, maxfiles, maxbytes, files})."""
+    h = (await web(f"/mod/publication/view.php?id={cmid}")).text
+    at = h.find('name="gotoupload"')
+    if at < 0:
+        raise MoodleError("You cannot upload here (closed or not allowed)", "locked")
+    start = h.rfind("<form", 0, at)
+    fields = dict(_HIDDEN.findall(h[start:at]))
+    fields["gotoupload"] = "Edit/upload files"
+    page = (await web("/mod/publication/view.php", data=fields)).text
+    start = page.find('name="_qf__mod_publication_upload_form"')
+    if start < 0:
+        raise MoodleError("Moodle did not open the upload form", "http")
+    form = page[page.rfind("<form", 0, start): page.find("</form>", start)]
+    fields = dict(_HIDDEN.findall(form))
+    item = re.search(r'value="(\d+)" name="attachment_filemanager"', form)
+    if not item:
+        raise MoodleError("Moodle did not open the upload form", "http")
+    fields["attachment_filemanager"] = item.group(1)
+    init = page[page.find("M.form_filemanager.init"):]
+    limits = {
+        "itemid": int(item.group(1)),
+        "maxfiles": int(m.group(1)) if (m := re.search(r'maxfiles=(-?\d+)', page)) else -1,
+        "maxbytes": int(m.group(1)) if (m := re.search(r'maxbytes=(-?\d+)', page)) else -1,
+        "files": re.findall(r'"filename":"((?:[^"\\]|\\.)*)","filepath":"\\/"', init[: init.find("});")]),
+    }
+    limits["files"] = [json.loads(f'"{n}"') for n in limits["files"]]
+    return fields, limits
+
+
+async def change_publication(cmid: int, add: list[tuple[str, object]] = (), remove: set[str] | None = None) -> None:
+    """Changes the own files of a publication through Moodle's own form: removes by name, adds (a new file with a
+    taken name replaces the old one), saves. Files here are visible to everyone in the course."""
+    fields, form = await _upload_form(cmid)
+    names = {name for name, _ in add}
+    gone = (set(remove or ()) | names) & set(form["files"])
+    left = len(form["files"]) - len(gone) + len(add)
+    if form["maxfiles"] > 0 and left > form["maxfiles"]:
+        raise MoodleError(f"At most {form['maxfiles']} files", "bad_request")
+    if form["maxbytes"] > 0:
+        for name, content in add:
+            size = len(content) if isinstance(content, (bytes, bytearray)) else os.fstat(content.fileno()).st_size
+            if size > form["maxbytes"]:
+                raise MoodleError(f"{name} is larger than {form['maxbytes'] >> 20} MB", "bad_request")
+    for name in gone:
+        r = await web(
+            "/repository/draftfiles_ajax.php?action=delete",
+            data={"sesskey": fields["sesskey"], "itemid": form["itemid"], "filepath": "/", "filename": name},
+        )
+        try:
+            ok = r.json()
+        except ValueError:
+            ok = None
+        if not ok or (isinstance(ok, dict) and ok.get("error")):
+            raise MoodleError(f"Could not remove {name}", "http")
+    for name, content in add:
+        await upload(form["itemid"], name, content)
+    r = await web("/mod/publication/upload.php", data={**fields, "submitbutton": "Save changes"})
+    if "/mod/publication/upload.php" in r.url.path:
+        err = re.search(r'class="[^"]*(?:invalid-feedback|alert-danger|error)[^"]*"[^>]*>(.*?)</', r.text, re.S)
+        raise MoodleError(_cell(err.group(1)) if err and _cell(err.group(1)) else "Moodle did not save the files", "warning")
+
+
+async def publication_zip(cmid: int):
+    """All published files of a publication as one zip (Moodle builds it)."""
+    r = await web(f"/mod/publication/view.php?id={cmid}&action=zip&allfilespage=0", stream=True)
+    mime = r.headers.get("content-type", "").split(";")[0].strip()
+    if r.status_code != 200 or mime == "text/html":
+        await r.aclose()
+        raise MoodleError("No files to download", "not_found")
+    name = _disposition_name(r.headers.get("content-disposition", "")) or "files.zip"
+
+    async def body():
+        try:
+            async for chunk in r.aiter_bytes():
+                yield chunk
+        finally:
+            await r.aclose()
+
+    return name, mime or "application/zip", None, body()
 
 
 async def publication_file(cmid: int, file_id: int):

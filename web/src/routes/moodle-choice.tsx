@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Download, ExternalLink, Loader2 } from 'lucide-react'
+import { Check, CheckCircle2, Download, FileText, Loader2, Paperclip, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ErrorView } from '@/components/ErrorView'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorText } from '@/lib/api'
 import { safeHtml } from '@/lib/format'
@@ -127,40 +128,133 @@ function useChoiceData(cmid: number, courseId: number) {
   return useQuery(moodleQ.choice(cmid, courseId)).data
 }
 
-/** A publication (files the students share): own files on top, then everybody's, newest first. */
-export function PublicationBody({ cmid, url }: { cmid: number; url: string }) {
+/** A publication (files the students share): own files to add and remove (everyone sees them), then everybody's. */
+export function PublicationBody({ cmid }: { cmid: number; url: string }) {
+  const qc = useQueryClient()
   const pub = useQuery(moodleQ.publication(cmid))
+  const input = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState<string[]>([])
+  const [drag, setDrag] = useState(false)
+  const [term, setTerm] = useState('')
   if (pub.isPending) return <Skeleton className="my-2 ml-12 h-24 rounded-lg" />
   if (pub.isError || !pub.data) return <ErrorView error={pub.error} retry={() => void pub.refetch()} />
   const p = pub.data
   const file = (id: number) => `/api/moodle/publications/${cmid}/files/${id}`
-  const row = (f: { id: number; name: string; by?: string; modified?: string }) => (
-    <div key={f.id} className="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-white/5">
+  const t = term.trim().toLowerCase()
+  const shown = t ? p.files.filter((f) => f.name.toLowerCase().includes(t) || f.by.toLowerCase().includes(t)) : p.files
+
+  const change = async (label: string[], fn: () => Promise<{ add?: string[]; remove?: string[] }>) => {
+    setBusy(label)
+    try {
+      qc.setQueryData(moodleQ.publication(cmid).queryKey, await moodleApi.changePublication(cmid, await fn()))
+    } catch (e) {
+      toast.error(errorText(e))
+    } finally {
+      setBusy([])
+    }
+  }
+  const add = (files: FileList | File[]) => {
+    const list = [...files]
+    if (!list.length || !p.canUpload) return
+    void change(
+      list.map((f) => f.name),
+      async () => ({ add: await Promise.all(list.map((f) => moodleApi.upload(f).then((u) => u.id))) }),
+    )
+  }
+
+  const row = (f: { id: number; name: string; by?: string; state?: string }, remove?: () => void) => (
+    <div key={f.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/5">
+      <FileText className="size-4 shrink-0 text-muted-foreground" />
       <a href={file(f.id)} target="_blank" rel="noopener noreferrer" className="flex min-w-0 flex-1 items-center gap-3">
         <span className="min-w-0 flex-1 truncate">{f.name}</span>
         {f.by && <span className="hidden max-w-40 shrink-0 truncate text-xs text-muted-foreground sm:block">{f.by}</span>}
       </a>
+      {f.state && <CheckCircle2 className="size-4 shrink-0 text-primary" aria-label={f.state} />}
       <a href={`${file(f.id)}?download=true`} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-white/10 hover:text-foreground" aria-label="Download">
         <Download className="size-4" />
       </a>
+      {remove && (
+        <button className="shrink-0 rounded p-1 text-muted-foreground hover:bg-white/10 hover:text-foreground disabled:opacity-50" disabled={busy.length > 0} onClick={remove} aria-label="Remove">
+          <X className="size-4" />
+        </button>
+      )}
     </div>
   )
+
   return (
-    <div className="mb-2 ml-12 rounded-lg bg-card p-3 text-sm">
-      <div className="mb-1 flex items-center gap-2">
-        <h3 className="flex-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">My files</h3>
-        {p.canUpload && (
-          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-white/10 hover:text-foreground">
-            Upload <ExternalLink className="size-3" />
-          </a>
+    <div className="mb-2 ml-12 flex flex-col gap-3 text-sm">
+      <section
+        className={cn('rounded-lg border bg-card p-3 transition-colors', drag && 'border-primary bg-primary/5')}
+        onDragOver={(e) => {
+          if (!p.canUpload) return
+          e.preventDefault()
+          setDrag(true)
+        }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDrag(false)
+          add(e.dataTransfer.files)
+        }}
+      >
+        <div className="mb-1 flex items-center gap-2">
+          <h3 className="flex-1 font-semibold">My files</h3>
+          {p.canUpload && p.own.length > 0 && (
+            <Button variant="ghost" size="sm" disabled={busy.length > 0} onClick={() => input.current?.click()}>
+              <Paperclip /> Add file
+            </Button>
+          )}
+        </div>
+        {p.own.map((f) => row(f, p.canUpload ? () => void change([], async () => ({ remove: [f.name] })) : undefined))}
+        {busy.map((n) => (
+          <div key={n} className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground">
+            <Loader2 className="size-4 shrink-0 animate-spin" />
+            <span className="truncate">{n}</span>
+          </div>
+        ))}
+        {!p.own.length && !busy.length && p.canUpload && (
+          <button
+            onClick={() => input.current?.click()}
+            className="flex w-full flex-col items-center gap-1.5 rounded-lg border border-dashed py-5 text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+          >
+            <Paperclip className="size-5" /> Add file
+          </button>
         )}
-      </div>
-      {p.own.length ? p.own.map((f) => row(f)) : <p className="px-2 py-1.5 text-muted-foreground">None</p>}
+        <input
+          ref={input}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) add(e.target.files)
+            e.target.value = ''
+          }}
+        />
+      </section>
+
       {p.files.length > 0 && (
-        <>
-          <h3 className="mt-3 mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">Published ({p.files.length})</h3>
-          {p.files.map((f) => row(f))}
-        </>
+        <section className="rounded-lg border bg-card p-3">
+          <div className="mb-1 flex items-center gap-2">
+            <h3 className="flex-1 font-semibold">
+              Published <span className="font-normal text-muted-foreground">{p.files.length}</span>
+            </h3>
+            {p.files.length > 8 && (
+              <div className="relative w-40">
+                <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input className="h-7 pl-7 text-xs" placeholder="Filter" aria-label="Filter" value={term} onChange={(e) => setTerm(e.target.value)} />
+              </div>
+            )}
+            <a
+              href={`/api/moodle/publications/${cmid}/zip`}
+              className="rounded p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+              aria-label="Download all"
+              title="Download all"
+            >
+              <Download className="size-4" />
+            </a>
+          </div>
+          {shown.map((f) => row(f))}
+        </section>
       )}
     </div>
   )

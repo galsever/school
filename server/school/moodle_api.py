@@ -144,6 +144,30 @@ async def publication(cmid: int):
     return await md.publication(cmid)
 
 
+@router.post("/publications/{cmid}")
+async def change_publication(cmid: int, payload: dict = Body(...)):
+    """{add: [upload ids], remove: [file names]} on the own files (visible to everyone); answers the publication afterwards."""
+    try:
+        taken = _take(list(payload.get("add") or []))
+    except ValueError as e:
+        raise _bad(str(e)) from None
+    files = [(name, path.open("rb")) for name, path in taken]
+    try:
+        await md.change_publication(cmid, files, {str(n) for n in payload.get("remove") or []})
+    finally:
+        for _, f in files:
+            f.close()
+    for _, path in taken:
+        path.unlink(missing_ok=True)
+        path.with_suffix(".name").unlink(missing_ok=True)
+    return await md.publication(cmid)
+
+
+@router.get("/publications/{cmid}/zip")
+async def publication_zip(cmid: int):
+    return _stream(*await md.publication_zip(cmid), True)
+
+
 @router.get("/publications/{cmid}/files/{file_id}")
 async def publication_file(cmid: int, file_id: int, download: bool = False):
     return _stream(*await md.publication_file(cmid, file_id), download)
