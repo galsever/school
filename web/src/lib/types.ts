@@ -88,3 +88,23 @@ export type DriveItem = {
 
 export type Folder = { items: DriveItem[] }
 export type ChannelFolder = Folder & { drive: string; id: string; name: string; webUrl: string | null }
+
+export type MailAddress = { name: string; address: string }
+export type MailSummary = {
+  id: string
+  subject: string
+  from: MailAddress
+  to: MailAddress[]
+  time: string
+  read: boolean
+  preview: string
+  attachments: boolean
+  flagged: boolean
+}
+export type MailPage = { messages: MailSummary[]; cursor: string | null }
+export type MailFolder = 'inbox' | 'sent' | 'archive'
+export type Mail = MailSummary & {
+  cc: MailAddress[]
+  html: string
+  files: { id: string; name: string; size: number | null; type: string }[]
+}

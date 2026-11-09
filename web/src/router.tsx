@@ -65,6 +65,32 @@ const channelRoute = createRoute({
   component: lazyRouteComponent(() => import('@/routes/conversation'), 'ChannelPage'),
 })
 
+const mailSearch = (s: Record<string, unknown>): { folder?: 'sent' | 'archive'; compose?: boolean } => {
+  const out: { folder?: 'sent' | 'archive'; compose?: boolean } = {}
+  if (s.folder === 'sent' || s.folder === 'archive') out.folder = s.folder
+  if (s.compose === true || s.compose === 'true') out.compose = true
+  return out
+}
+
+const mailRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: '/mail',
+  validateSearch: mailSearch,
+  component: lazyRouteComponent(() => import('@/routes/mail'), 'MailLayout'),
+})
+
+const mailIndexRoute = createRoute({
+  getParentRoute: () => mailRoute,
+  path: '/',
+  component: lazyRouteComponent(() => import('@/routes/mail'), 'NoMail'),
+})
+
+const mailItemRoute = createRoute({
+  getParentRoute: () => mailRoute,
+  path: '$id',
+  component: lazyRouteComponent(() => import('@/routes/mail'), 'MailPage'),
+})
+
 const assignmentsRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: '/assignments',
@@ -91,6 +117,7 @@ const routeTree = rootRoute.addChildren([
     indexRoute,
     chatsRoute.addChildren([chatsIndexRoute, chatRoute]),
     teamsRoute.addChildren([teamsIndexRoute, channelRoute]),
+    mailRoute.addChildren([mailIndexRoute, mailItemRoute]),
     assignmentsRoute,
     assignmentRoute,
     settingsRoute,

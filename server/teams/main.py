@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-from . import auth, config, mcp, upstream
+from . import auth, config, mail, mcp, upstream
 from .ms import NotConnected, session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -238,6 +238,73 @@ async def open_file(url: str):
     if not url.startswith(upstream.GRAPH_URL + "/drives/"):
         raise HTTPException(400, {"error": "bad_url", "detail": "Not a drive item"})
     return RedirectResponse(await upstream.file_web_url(url), status_code=302)
+
+
+# ---- mail (school Outlook) ---------------------------------------------------------
+
+def _mid(*ids: str) -> None:
+    if not all(mail.valid_id(i) for i in ids):
+        raise HTTPException(400, {"error": "bad_id", "detail": "Bad id"})
+
+
+@app.get("/api/mail", dependencies=guard)
+async def mail_list(folder: str = "inbox", cursor: str | None = None, unread: bool = False, q: str = ""):
+    return await mail.list_mail(folder, cursor, unread, q.strip())
+
+
+@app.get("/api/mail/unread", dependencies=guard)
+async def mail_unread():
+    return {"count": await mail.unread_count()}
+
+
+@app.get("/api/mail/people", dependencies=guard)
+async def mail_people(q: str):
+    return await mail.search_people(q) if len(q.strip()) >= 2 else []
+
+
+@app.post("/api/mail/send", dependencies=guard)
+async def mail_send(payload: dict = Body(...)):
+    to = [str(a) for a in payload.get("to") or []]
+    cc = [str(a) for a in payload.get("cc") or []]
+    text = str(payload.get("text", "")).strip()
+    if not to or not text:
+        raise HTTPException(400, {"error": "bad_mail", "detail": "Recipient and text needed"})
+    await mail.send(to, str(payload.get("subject", ""))[:300], text, cc)
+    return Response(status_code=204)
+
+
+@app.get("/api/mail/{mid}", dependencies=guard)
+async def mail_get(mid: str):
+    _mid(mid)
+    return await mail.get_mail(mid)
+
+
+@app.post("/api/mail/{mid}/reply", dependencies=guard)
+async def mail_reply(mid: str, payload: dict = Body(...)):
+    _mid(mid)
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(400, {"error": "bad_mail", "detail": "Empty text"})
+    await mail.reply(mid, text, bool(payload.get("all")))
+    return Response(status_code=204)
+
+
+@app.get("/api/mail/{mid}/attachments/{aid}", dependencies=guard)
+async def mail_attachment(mid: str, aid: str, download: bool = False):
+    _mid(mid, aid)
+    from urllib.parse import quote
+
+    data, ctype, name = await mail.attachment(mid, aid)
+    inline = ctype.startswith(("image/", "application/pdf", "text/plain")) and "svg" not in ctype and not download
+    return Response(
+        data,
+        media_type=ctype,
+        headers={
+            "Content-Disposition": f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(name)}",
+            "Cache-Control": "private, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # ---- MCP (own bearer token, no app login) ------------------------------------------

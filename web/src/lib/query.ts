@@ -1,4 +1,4 @@
-import { QueryClient, queryOptions } from '@tanstack/react-query'
+import { QueryClient, infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 import { api, ApiError } from './api'
 
 export const queryClient = new QueryClient({
@@ -20,6 +20,15 @@ export const q = {
     queryOptions({ queryKey: ['files', teamId, channelId], queryFn: () => api.channelFiles(teamId, channelId), staleTime: 60_000 }),
   folder: (drive: string, item: string) =>
     queryOptions({ queryKey: ['folder', drive, item], queryFn: () => api.folder(drive, item), staleTime: 60_000 }),
+  mailList: (folder: string, search: string) =>
+    infiniteQueryOptions({
+      queryKey: ['mail', folder, search],
+      queryFn: ({ pageParam }) => api.mailList(folder, search, pageParam || undefined),
+      initialPageParam: '',
+      getNextPageParam: (last) => last.cursor ?? undefined,
+      refetchInterval: 60_000,
+    }),
+  mail: (id: string) => queryOptions({ queryKey: ['mail-item', id], queryFn: () => api.mail(id), staleTime: 5 * 60_000 }),
   assignments: () => queryOptions({ queryKey: ['assignments'], queryFn: api.assignments, staleTime: 5 * 60_000 }),
   assignment: (classId: string, id: string) =>
     queryOptions({ queryKey: ['assignment', classId, id], queryFn: () => api.assignment(classId, id) }),

@@ -1,4 +1,4 @@
-import type { Assignment, AssignmentDetail, ChannelFolder, Chat, DeviceLogin, Folder, MessagePage, MsStatus, Resource, Team } from './types'
+import type { Mail, MailAddress, MailPage, Assignment, AssignmentDetail, ChannelFolder, Chat, DeviceLogin, Folder, MessagePage, MsStatus, Resource, Team } from './types'
 
 export class ApiError extends Error {
   status: number
@@ -67,6 +67,12 @@ export const api = {
   send: (id: string, text: string) => post<{ id: string; clientId: string }>(`/api/chats/${enc(id)}/messages`, { text }),
   markRead: (id: string, messageId: string) => post(`/api/chats/${enc(id)}/read`, { messageId }),
   teams: () => request<Team[]>('/api/teams'),
+  mailList: (folder: string, q: string, cursor?: string) =>
+    request<MailPage>(`/api/mail?folder=${folder}${q ? `&q=${enc(q)}` : ''}${cursor ? `&cursor=${enc(cursor)}` : ''}`),
+  mail: (id: string) => request<Mail>(`/api/mail/${enc(id)}`),
+  mailPeople: (q: string) => request<MailAddress[]>(`/api/mail/people?q=${enc(q)}`),
+  mailSend: (m: { to: string[]; cc: string[]; subject: string; text: string }) => post('/api/mail/send', m),
+  mailReply: (id: string, text: string, all: boolean) => post(`/api/mail/${enc(id)}/reply`, { text, all }),
   channelFiles: (teamId: string, channelId: string) =>
     request<ChannelFolder>(`/api/teams/${enc(teamId)}/channels/${enc(channelId)}/files`),
   folder: (drive: string, item: string) => request<Folder>(`/api/drives/${enc(drive)}/items/${enc(item)}/children`),

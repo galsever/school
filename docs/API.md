@@ -18,7 +18,18 @@ All JSON. Errors: `{"error": code, "detail": text}`; `401 login_required` (app p
 
 Types: `web/src/lib/types.ts`.
 
+## Mail (school Outlook, Graph with the same login)
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/mail?folder=inbox\|sent\|archive&q=&cursor=` | `{messages, cursor}` newest first; `q` searches |
+| GET | `/api/mail/{id}` | mail with sanitizable HTML (inline images rewritten to the attachment route), attachments; marks it read |
+| GET | `/api/mail/{id}/attachments/{aid}` | the attachment (images, PDF inline, rest as download) |
+| POST | `/api/mail/send` | `{to[], cc[], subject, text}` |
+| POST | `/api/mail/{id}/reply` | `{text, all}` |
+| GET | `/api/mail/people?q=` | address suggestions |
+
 ## MCP
 
 `POST /api/mcp`: MCP over streamable HTTP (stateless JSON-RPC), bearer token from `DATA_DIR/mcp-token`. Not behind the Pocket ID gate (personal-infra `apps/teams/mcp-route.yaml`), tailnet only.
-Tools: `list_chats`, `read_messages`, `send_message` (only write tool), `list_teams`, `list_files`, `read_file` (PDF/Office text), `list_assignments`, `get_assignment`. No turn-in or uploads by design.
+Tools: `list_chats`, `read_messages`, `send_message`, `list_mail`, `read_mail`, `send_mail`, `reply_mail` (the send/reply ones are the only write tools), `list_teams`, `list_files`, `read_file` (PDF/Office text), `list_assignments`, `get_assignment`. No turn-in or uploads by design.

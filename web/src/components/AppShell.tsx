@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ClipboardList, MessageSquare, Settings, Users } from 'lucide-react'
+import { ClipboardList, Mail, MessageSquare, Settings, Users } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { q } from '@/lib/query'
 import type { Chat } from '@/lib/types'
@@ -11,6 +11,7 @@ const nav = [
   { to: '/chats', label: 'Chats', icon: MessageSquare },
   { to: '/teams', label: 'Teams', icon: Users },
   { to: '/assignments', label: 'Assignments', icon: ClipboardList },
+  { to: '/mail', label: 'Mail', icon: Mail },
   { to: '/settings', label: 'Settings', icon: Settings },
 ] as const
 
@@ -45,17 +46,17 @@ export function AppShell() {
     document.title = unread ? `(${unread}) Teams` : 'Teams'
   }, [unread])
   // On phones a detail page covers the whole screen, without the bottom bar
-  const detail = useRouterState({ select: (s) => /^\/(chats|teams|assignments\/[^/]+)\/[^/]+/.test(s.location.pathname) })
+  const detail = useRouterState({ select: (s) => /^\/(chats|teams|mail|assignments\/[^/]+)\/[^/]+/.test(s.location.pathname) })
 
   return (
     <div className="flex h-full flex-col md:flex-row">
       <nav className="hidden w-16 shrink-0 flex-col items-center gap-2 border-r border-sidebar-border bg-sidebar py-3 md:flex">
         <img src="/favicon.svg" alt="" className="mb-3 size-8" />
-        {nav.slice(0, 3).map((item) => (
+        {nav.slice(0, 4).map((item) => (
           <RailLink key={item.to} item={item} badge={item.to === '/chats' ? unread : 0} />
         ))}
         <div className="flex-1" />
-        <RailLink item={nav[3]} badge={0} />
+        <RailLink item={nav[4]} badge={0} />
       </nav>
       <main className="min-h-0 min-w-0 flex-1">
         <Outlet />

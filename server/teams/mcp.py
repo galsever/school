@@ -1,6 +1,6 @@
 """MCP server (streamable HTTP, stateless JSON-RPC) at /api/mcp: the school Teams account as tools for Claude.
 
-Read everything, send messages. No turn-in or uploads (his decision 2026-11-09). Own bearer token
+Read everything, send messages and mail. No turn-in or uploads (his decision 2026-11-09). Own bearer token
 (DATA_DIR/mcp-token): the route skips the Pocket ID gate (personal-infra apps/teams/mcp-route.yaml), tailnet only.
 """
 
@@ -13,7 +13,7 @@ from urllib.parse import unquote
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from . import config, upstream
+from . import config, mail, upstream
 
 TOKEN = config._secret_file("mcp-token", lambda: __import__("secrets").token_urlsafe(36))
 PROTOCOL = "2025-06-18"
@@ -193,6 +193,48 @@ async def get_assignment(class_id: str, assignment_id: str) -> str:
     return "\n".join(lines)
 
 
+async def list_mail(folder: str = "inbox", unread_only: bool = False, search: str = "", limit: int = 25) -> str:
+    d = await mail.list_mail(folder, None, unread_only, search.strip())
+    rows = []
+    for m in d["messages"][: max(1, min(int(limit), 50))]:
+        who = ", ".join(r["name"] for r in m["to"]) if folder == "sent" else m["from"]["name"]
+        rows.append(
+            f"- {'' if m['read'] else '[UNREAD] '}{str(m['time'])[:16]} {who}: {m['subject']}"
+            f"{' [attachments]' if m['attachments'] else ''}\n  id={m['id']}\n  {m['preview'][:140]}"
+        )
+    return "\n".join(rows) or "No mail."
+
+
+async def read_mail(mail_id: str) -> str:
+    if not mail.valid_id(mail_id):
+        raise ValueError("bad id")
+    m = await mail.get_mail(mail_id)
+    lines = [
+        f"# {m['subject']}",
+        f"From: {m['from']['name']} <{m['from']['address']}>",
+        "To: " + ", ".join(f"{r['name']} <{r['address']}>" for r in m["to"]),
+    ]
+    if m["cc"]:
+        lines.append("Cc: " + ", ".join(f"{r['name']} <{r['address']}>" for r in m["cc"]))
+    lines += [f"Date: {m['time']}", "", _text(m["html"])[:MAX_TEXT]]
+    if m["files"]:
+        lines += ["", "Attachments: " + ", ".join(f["name"] for f in m["files"])]
+    return "\n".join(lines)
+
+
+async def send_mail(to: str, subject: str, text: str, cc: str = "") -> str:
+    split = lambda v: [a for a in re.split(r"[,;\s]+", v or "") if a]
+    await mail.send(split(to), subject, text, split(cc))
+    return "Sent."
+
+
+async def reply_mail(mail_id: str, text: str, reply_all: bool = False) -> str:
+    if not mail.valid_id(mail_id):
+        raise ValueError("bad id")
+    await mail.reply(mail_id, text, reply_all)
+    return "Replied."
+
+
 S = {"type": "string"}
 TOOLS = {
     "list_chats": (
@@ -238,8 +280,32 @@ TOOLS = {
         {"class_id": S, "assignment_id": S},
         ["class_id", "assignment_id"],
     ),
+    "list_mail": (
+        list_mail,
+        "School Outlook mail: list a folder newest first, optionally only unread or a search.",
+        {
+            "folder": {"type": "string", "enum": ["inbox", "sent", "archive", "deleted"]},
+            "unread_only": {"type": "boolean"},
+            "search": S,
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        },
+        [],
+    ),
+    "read_mail": (read_mail, "Read one school mail (marks it read).", {"mail_id": S}, ["mail_id"]),
+    "send_mail": (
+        send_mail,
+        "Send a new mail from the school account (only when the user asked for this exact mail). to/cc: addresses separated by commas.",
+        {"to": S, "subject": S, "text": S, "cc": S},
+        ["to", "subject", "text"],
+    ),
+    "reply_mail": (
+        reply_mail,
+        "Reply to a school mail (only when the user asked for this exact reply).",
+        {"mail_id": S, "text": S, "reply_all": {"type": "boolean"}},
+        ["mail_id", "text"],
+    ),
 }
-READ_ONLY = {n for n in TOOLS if n != "send_message"}
+READ_ONLY = {n for n in TOOLS if n not in ("send_message", "send_mail", "reply_mail")}
 
 
 def _tool_list():
@@ -301,8 +367,9 @@ async def _one(m: dict) -> dict | None:
                 "protocolVersion": params.get("protocolVersion") or PROTOCOL,
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "teams", "version": "0.1.0"},
-                "instructions": "The user's school Microsoft Teams (HTL Spengergasse): chats, class teams, channel files, assignments. "
-                "Reading is free; send_message posts as the user on the real school account, so only send what the user asked for.",
+                "instructions": "The user's school Microsoft account (HTL Spengergasse): Teams chats, class teams, channel files, assignments, "
+                "and Outlook mail. Reading is free; send_message, send_mail and reply_mail act as the user on the real school "
+                "account, so only send what the user asked for.",
             }
         )
     if method == "ping":
