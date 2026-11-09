@@ -141,6 +141,14 @@ async def mark_read(conv: str, payload: dict = Body(...)):
     return Response(status_code=204)
 
 
+@app.get("/api/media", dependencies=guard)
+async def media(url: str):
+    if not upstream.media_allowed(url):
+        raise HTTPException(400, {"error": "bad_url", "detail": "Not a Teams media URL"})
+    body, ctype = await upstream.media(url)
+    return Response(body, media_type=ctype, headers={"Cache-Control": "private, max-age=86400"})
+
+
 # ---- teams, assignments ------------------------------------------------------
 
 @app.get("/api/teams", dependencies=guard)

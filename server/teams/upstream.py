@@ -63,6 +63,29 @@ def text_of(content: str) -> str:
     return html.unescape(_TAG.sub(" ", content or "")).split("\n")[0].strip()[:200]
 
 
+# ---- media -------------------------------------------------------------------
+
+def media_allowed(url: str) -> bool:
+    """Only Teams' own media hosts (pasted images, stickers) go through the proxy."""
+    from urllib.parse import urlparse
+
+    u = urlparse(url)
+    host = u.hostname or ""
+    return u.scheme == "https" and (
+        host.endswith(".asyncgw.teams.microsoft.com") or host.endswith(".asm.skype.com")
+    )
+
+
+async def media(url: str) -> tuple[bytes, str]:
+    tok, _ = await session.skype()
+    r = await session.http.get(url, headers={"Authorization": f"skype_token {tok}"}, follow_redirects=True)
+    _check(r)
+    ctype = r.headers.get("content-type", "application/octet-stream")
+    if not ctype.startswith("image/"):
+        raise Upstream(415, "not an image")
+    return r.content, ctype
+
+
 # ---- people ----------------------------------------------------------------
 
 async def me() -> dict:

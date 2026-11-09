@@ -28,7 +28,15 @@ export function dueText(iso: string | null): { text: string; late: boolean; soon
   return { text: full.format(d), late: false, soon: days < 4 }
 }
 
+const MEDIA_HOST = /^https:\/\/[^/]+\.(asyncgw\.teams\.microsoft\.com|asm\.skype\.com)\//
+
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  // pasted images need the skype token: load them through our server
+  if (node.tagName === 'IMG') {
+    const src = node.getAttribute('src') ?? ''
+    if (MEDIA_HOST.test(src)) node.setAttribute('src', '/api/media?url=' + encodeURIComponent(src))
+    node.setAttribute('loading', 'lazy')
+  }
   if (node.tagName === 'A') {
     node.setAttribute('target', '_blank')
     node.setAttribute('rel', 'noopener noreferrer')
