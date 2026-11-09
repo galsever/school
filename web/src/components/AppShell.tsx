@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ClipboardList, MessageSquare, Settings, Users } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { q } from '@/lib/query'
 import type { Chat } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -12,6 +13,29 @@ const nav = [
   { to: '/assignments', label: 'Assignments', icon: ClipboardList },
   { to: '/settings', label: 'Settings', icon: Settings },
 ] as const
+
+type NavItem = (typeof nav)[number]
+
+function RailLink({ item, badge }: { item: NavItem; badge: number }) {
+  const Icon = item.icon
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Link
+          to={item.to}
+          aria-label={item.label}
+          className="group relative flex size-11 items-center justify-center rounded-xl text-muted-foreground outline-none transition-colors hover:bg-white/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          activeProps={{ className: 'bg-primary/15 !text-primary' }}
+        >
+          <span className="absolute -left-2 h-5 w-1 rounded-r-full bg-primary opacity-0 transition-opacity group-data-[status=active]:opacity-100" />
+          <Icon className="size-[22px]" strokeWidth={1.75} />
+          {badge > 0 && <Badge n={badge} />}
+        </Link>
+      </TooltipTrigger>
+      <TooltipContent side="right">{item.label}</TooltipContent>
+    </Tooltip>
+  )
+}
 
 export function AppShell() {
   const chats = useQuery(q.chats())
@@ -25,19 +49,13 @@ export function AppShell() {
 
   return (
     <div className="flex h-full flex-col md:flex-row">
-      <nav className="hidden w-[72px] shrink-0 flex-col items-center gap-1 border-r border-sidebar-border bg-sidebar py-3 md:flex">
-        {nav.map(({ to, label, icon: Icon }) => (
-          <Link
-            key={to}
-            to={to}
-            className="relative flex w-16 flex-col items-center gap-1 rounded-lg py-2 text-[11px] text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
-            activeProps={{ className: 'bg-white/10 !text-foreground' }}
-          >
-            <Icon className="size-5" strokeWidth={1.75} />
-            {label}
-            {to === '/chats' && unread > 0 && <Badge n={unread} />}
-          </Link>
+      <nav className="hidden w-16 shrink-0 flex-col items-center gap-2 border-r border-sidebar-border bg-sidebar py-3 md:flex">
+        <img src="/favicon.svg" alt="" className="mb-3 size-8" />
+        {nav.slice(0, 3).map((item) => (
+          <RailLink key={item.to} item={item} badge={item.to === '/chats' ? unread : 0} />
         ))}
+        <div className="flex-1" />
+        <RailLink item={nav[3]} badge={0} />
       </nav>
       <main className="min-h-0 min-w-0 flex-1">
         <Outlet />
@@ -67,7 +85,7 @@ export function AppShell() {
 
 function Badge({ n }: { n: number }) {
   return (
-    <span className="absolute top-1 right-3 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 font-semibold text-primary-foreground">
+    <span className="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 font-semibold text-primary-foreground">
       {n > 99 ? '99+' : n}
     </span>
   )
