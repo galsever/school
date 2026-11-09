@@ -305,7 +305,29 @@ def _files(props: dict) -> list[dict]:
     ]
 
 
+_REC_TITLE = re.compile(r"<Title>(.*?)</Title>", re.S)
+_REC_HREF = re.compile(r'<a href="([^"]+)">')
+_REC_DUR = re.compile(r'duration="(\d+):(\d+):(\d+)')
+
+
+def _recording(content: str) -> dict | None:
+    """A finished meeting recording as a file entry. Teams also posts interim chunks (empty link): those give None."""
+    href = _REC_HREF.search(content)
+    if not href:
+        return None
+    t = _REC_TITLE.search(content)
+    name = html.unescape(t.group(1)).strip() if t else "Recording"
+    d = _REC_DUR.search(content)
+    if d:
+        h, mi, se = (int(x) for x in d.groups())
+        if h or mi or se:
+            name += f" ({h}:{mi:02}:{se:02})" if h else f" ({mi}:{se:02})"
+    return {"name": name, "url": html.unescape(href.group(1)), "type": "recording", "size": None}
+
+
 def _preview(m: dict) -> str:
+    if m.get("messagetype") == "RichText/Media_CallRecording":
+        return "Recording"
     if m.get("messagetype") == "RichText/Media_Card":
         cards = _cards(m.get("content", ""))
         return cards[0]["blocks"][0]["text"][:200] if cards and cards[0]["blocks"] else "Card"
@@ -318,9 +340,13 @@ def _preview(m: dict) -> str:
 
 def _message(m: dict, my: str) -> dict | None:
     mtype = m.get("messagetype", "")
-    if not (mtype.startswith("RichText") or mtype == "Text"):
+    if not (mtype.startswith("RichText") or mtype == "Text") or mtype == "RichText/Media_CallTranscript":
         return None
     props = m.get("properties") or {}
+    if mtype == "RichText/Media_CallRecording":
+        rec = _recording(m.get("content", ""))
+        if not rec or props.get("deletetime"):
+            return None
     card = mtype == "RichText/Media_Card"
     return {
         "id": m["id"],
@@ -328,10 +354,10 @@ def _message(m: dict, my: str) -> dict | None:
         "from": m.get("imdisplayname") or "",
         "mine": _oid(m.get("from", "")) == my,
         "time": m.get("composetime"),
-        "html": "" if props.get("deletetime") or card else m.get("content", ""),
+        "html": "" if props.get("deletetime") or card or mtype == "RichText/Media_CallRecording" else m.get("content", ""),
         "format": "html" if mtype.startswith("RichText") else "text",
         "cards": _cards(m.get("content", "")) if card else [],
-        "files": _files(props),
+        "files": [rec] if mtype == "RichText/Media_CallRecording" else _files(props),
         "edited": bool(props.get("edittime")),
         "deleted": bool(props.get("deletetime")),
         "subject": props.get("subject") or None,

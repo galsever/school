@@ -30,7 +30,7 @@ The website does not retry 400, 401, 404 and 409. Types: `web/src/lib/types.ts`.
 | Method | Path | Returns |
 |---|---|---|
 | GET | `/api/chats` | `Chat[]` (chats, meeting chats, channels with activity), newest first. A channel carries the own display name; a hidden one is never `unread` |
-| GET | `/api/chats/{id}/messages?cursor=` | `{messages: Message[] oldest first, cursor}`; cursor = next older page |
+| GET | `/api/chats/{id}/messages?cursor=` | `{messages: Message[] oldest first, cursor}`; cursor = next older page. A finished meeting recording comes as a message with one file of `type: "recording"` (SharePoint link, title with length); interim recording chunks and transcript notices are left out |
 | POST | `/api/chats/{id}/messages` | `{text}` -> sends as HTML paragraphs |
 | POST | `/api/chats/{id}/read` | `{messageId}` -> sets the read horizon |
 | GET | `/api/media?url=` | a pasted image from a message (needs the skype token, so it goes through the server); Teams media hosts only |

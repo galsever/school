@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearch } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ClipboardList, ExternalLink, FileText, Loader2, SendHorizontal } from 'lucide-react'
+import { ArrowLeft, ClipboardList, ExternalLink, FileText, Loader2, SendHorizontal, Video } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar } from '@/components/Avatar'
 import { Lightbox } from '@/components/Lightbox'
@@ -323,7 +323,11 @@ function Files({ files }: { files: MessageFile[] }) {
       {files.map((f, i) => {
         const body = (
           <>
-            <FileText className="size-4 shrink-0 text-muted-foreground" />
+            {f.type === 'recording' ? (
+              <Video className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <FileText className="size-4 shrink-0 text-muted-foreground" />
+            )}
             <span className="truncate">{f.name}</span>
           </>
         )
