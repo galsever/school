@@ -649,6 +649,71 @@ async def grade_items(course_id: int) -> list[dict]:
     return rows
 
 
+# ---- choices -------------------------------------------------------------------------
+
+async def _find_choice(cmid: int, course_id: int) -> dict:
+    out = await cached("mod_choice_get_choices_by_courses", {"courseids": [course_id]} if course_id else {})
+    for c in out.get("choices") or []:
+        if c.get("coursemodule") == cmid:
+            return c
+    raise MoodleError("Choice not found in your courses", "not_found")
+
+
+async def choice(cmid: int, course_id: int = 0) -> dict:
+    """A choice activity: its options with the own pick, how many took each and (when the teacher publishes them) who."""
+    c = await _find_choice(cmid, course_id)
+    me = (await site())["userid"]
+    opts, results = await asyncio.gather(
+        cached("mod_choice_get_choice_options", {"choiceid": c["id"]}),
+        _or(cached("mod_choice_get_choice_results", {"choiceid": c["id"]}), {}),
+    )
+    taken = {r["id"]: r for r in results.get("options") or [] if r.get("id")}
+    rows = opts.get("options") or []
+    closed = not rows  # closed or not open yet: Moodle gives no options, only the reason
+    if closed:
+        rows = [{"id": r["id"], "text": r.get("text"), "maxanswers": r.get("maxanswer"), "disabled": True} for r in taken.values()]
+    options = []
+    for o in rows:
+        r = taken.get(o["id"]) or {}
+        people = [plain(u.get("fullname")) for u in r.get("userresponses") or []]
+        mine = bool(o.get("checked")) or any(u.get("userid") == me for u in r.get("userresponses") or [])
+        options.append(
+            {
+                "id": o["id"],
+                "text": plain(o.get("text")),
+                "checked": mine,
+                "disabled": bool(o.get("disabled")),
+                "count": o.get("countanswers", r.get("numberofuser")),
+                "max": o.get("maxanswers") if c.get("limitanswers") and o.get("maxanswers") else None,
+                "people": people,
+            }
+        )
+    answered = any(o["checked"] for o in options)
+    return {
+        "id": c["id"],
+        "cmid": cmid,
+        "name": plain(c.get("name")),
+        "intro": local_html(c.get("intro")),
+        "multiple": bool(c.get("allowmultiple")),
+        "answered": answered,
+        # a pick can be made or changed: open, and either nothing picked yet or the teacher allows changing
+        "canAnswer": not closed and (not answered or bool(c.get("allowupdate"))) and any(not o["disabled"] or o["checked"] for o in options),
+        "note": "; ".join(w.get("message", "") for w in opts.get("warnings") or []) if closed else "",
+        "options": options,
+    }
+
+
+async def answer_choice(cmid: int, course_id: int, option_ids: list[int]) -> None:
+    c = await _find_choice(cmid, course_id)
+    if not option_ids or (len(option_ids) > 1 and not c.get("allowmultiple")):
+        raise MoodleError("Pick one option", "bad_request")
+    try:
+        out = await call("mod_choice_submit_choice_response", {"choiceid": c["id"], "responses": option_ids})
+        _warnings("Choice", out.get("warnings") if isinstance(out, dict) else None)
+    finally:
+        drop_cache()
+
+
 # ---- assignments ---------------------------------------------------------------------
 
 def _config(a: dict, plugin: str, name: str) -> str:

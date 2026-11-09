@@ -139,6 +139,22 @@ async def assignment(cmid: int, course: int = 0):
     return await md.describe_assignment(await md.find_assignment(cmid, course, by="cmid"))
 
 
+@router.get("/choices/{cmid}")
+async def choice(cmid: int, course: int = 0):
+    return await md.choice(cmid, course)
+
+
+@router.post("/choices/{cmid}")
+async def answer_choice(cmid: int, payload: dict = Body(...), course: int = 0):
+    """{options: [option ids]}: picks them for real; answers the choice as it is afterwards."""
+    try:
+        ids = [int(i) for i in payload.get("options") or []]
+    except (TypeError, ValueError):
+        raise _bad("Bad option") from None
+    await md.answer_choice(cmid, course, ids)
+    return await md.choice(cmid, course)
+
+
 @router.post("/uploads")
 async def upload(request: Request, name: str):
     """Raw file body, name in the query. The file waits (an hour at most) until a submission takes it."""

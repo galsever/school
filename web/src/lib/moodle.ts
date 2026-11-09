@@ -89,6 +89,18 @@ export type MoodleAssignment = {
   submission: MoodleSubmission | null
   feedback: { grade: string; gradedAt: string | null; comments: string; files: MoodleFile[] } | null
 }
+export type MoodleChoice = {
+  id: number
+  cmid: number
+  name: string
+  intro: string
+  multiple: boolean
+  answered: boolean
+  canAnswer: boolean
+  /** why it takes no answer (closed, not open yet), in Moodle's words */
+  note: string
+  options: { id: number; text: string; checked: boolean; disabled: boolean; count: number | null; max: number | null; people: string[] }[]
+}
 export type MoodleLogin = { configured: boolean; url: string; user: string; blocked: boolean }
 
 const enc = encodeURIComponent
@@ -101,6 +113,8 @@ export const moodleApi = {
   course: (id: number) => request<MoodleCourseContent>(`${base}/courses/${id}`),
   grades: (id: number) => request<MoodleGrade[]>(`${base}/courses/${id}/grades`),
   assignment: (cmid: number, course: number) => request<MoodleAssignment>(`${base}/assignments/${cmid}?course=${course}`),
+  choice: (cmid: number, course: number) => request<MoodleChoice>(`${base}/choices/${cmid}?course=${course}`),
+  answerChoice: (cmid: number, course: number, options: number[]) => post<MoodleChoice>(`${base}/choices/${cmid}?course=${course}`, { options }),
   page: (url: string) => request<{ html: string }>(`${base}/page?url=${enc(url)}`),
   upload: (file: File) =>
     request<{ id: string; size: number }>(`${base}/uploads?name=${enc(file.name)}`, {
@@ -166,6 +180,8 @@ export const moodleQ = {
     }),
   assignment: (cmid: number, course: number) =>
     queryOptions({ queryKey: ['moodle', 'assignment', cmid], queryFn: () => moodleApi.assignment(cmid, course), staleTime: STALE }),
+  choice: (cmid: number, course: number) =>
+    queryOptions({ queryKey: ['moodle', 'choice', cmid], queryFn: () => moodleApi.choice(cmid, course), staleTime: STALE }),
   page: (url: string) => queryOptions({ queryKey: ['moodle', 'page', url], queryFn: () => moodleApi.page(url), staleTime: 5 * STALE }),
   login: () => queryOptions({ queryKey: ['moodle-login'], queryFn: moodleApi.login, staleTime: 5 * STALE }),
 }

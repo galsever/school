@@ -16,6 +16,7 @@ import {
   Folder,
   GraduationCap,
   Link2,
+  ListChecks,
   Lock,
   Presentation,
   RotateCw,
@@ -41,6 +42,7 @@ import {
   type MoodleGrade,
   type MoodleModule,
 } from '@/lib/moodle'
+import { ChoiceBody } from '@/routes/moodle-choice'
 import { cn } from '@/lib/utils'
 import { MoodleAssignmentView } from '@/routes/moodle-assignment'
 
@@ -274,6 +276,7 @@ function moduleIcon(m: MoodleModule) {
   if (m.type === 'assign') return ClipboardList
   if (m.type === 'folder') return Folder
   if (m.type === 'url') return Link2
+  if (m.type === 'choice') return ListChecks
   if (m.type === 'resource' && m.files.length) return iconFor(m.files[0].name)
   if (m.type === 'page') return FileText
   return ExternalLink
@@ -428,7 +431,7 @@ function Sections({
         <Card key={s.id} title={s.name}>
           {s.summary && <Html html={s.summary} className="px-2 pb-2 text-sm text-muted-foreground" />}
           {s.modules.map((m) => (
-            <ModuleRow key={m.cmid} m={m} active={active === m.cmid} target={hash === `m${m.cmid}`} open={open} warm={warm} />
+            <ModuleRow key={m.cmid} m={m} active={active === m.cmid} target={hash === `m${m.cmid}`} open={open} warm={warm} courseId={course.id} />
           ))}
         </Card>
       ))}
@@ -450,6 +453,7 @@ const TONES: Record<string, string> = {
   resource: 'bg-sky-500/15 text-sky-400',
   folder: 'bg-sky-500/15 text-sky-400',
   page: 'bg-sky-500/15 text-sky-400',
+  choice: 'bg-amber-500/15 text-amber-400',
   url: 'bg-emerald-500/15 text-emerald-400',
   forum: 'bg-emerald-500/15 text-emerald-400',
   other: 'bg-white/5 text-muted-foreground',
@@ -491,6 +495,7 @@ function ModuleRow({
   target,
   open,
   warm,
+  courseId,
 }: {
   m: MoodleModule
   active: boolean
@@ -498,6 +503,7 @@ function ModuleRow({
   target: boolean
   open: (cmid: number) => void
   warm: (cmid: number) => void
+  courseId: number
 }) {
   const [expanded, setExpanded] = useState(target || (m.type === 'folder' && m.files.length <= 6))
   useEffect(() => {
@@ -564,6 +570,14 @@ function ModuleRow({
         <ChevronRight className={cn('size-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
       </button>,
       expanded && <PageBody url={m.files.find((f) => f.name === 'index.html')?.url ?? m.files[0].url} />,
+    )
+  if (m.type === 'choice')
+    return wrap(
+      <button className={rowCls} onClick={() => setExpanded((v) => !v)}>
+        {name}
+        <ChevronRight className={cn('size-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')} />
+      </button>,
+      expanded && <ChoiceBody cmid={m.cmid} courseId={courseId} />,
     )
   // links, forums, quizzes and everything else open where they live
   return wrap(

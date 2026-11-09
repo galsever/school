@@ -302,6 +302,32 @@ def test_course_shape(fake):
     assert mods[1]["restricted"] == "Not yet" and mods[2]["link"] == "https://x.test/"
 
 
+def test_choice(fake):
+    fake.answers["mod_choice_get_choices_by_courses"] = {"choices": [{"id": 5, "coursemodule": 50, "name": "Termin &amp; Co", "intro": "<p>x</p>", "allowupdate": False, "allowmultiple": False, "limitanswers": True}]}
+    fake.answers["mod_choice_get_choice_options"] = {"options": [
+        {"id": 1, "text": "A &amp; B", "maxanswers": 2, "countanswers": 2, "checked": False, "disabled": True},
+        {"id": 2, "text": "C", "maxanswers": 2, "countanswers": 0, "checked": False, "disabled": False},
+    ]}
+    fake.answers["mod_choice_get_choice_results"] = {"options": [{"id": 1, "text": "A", "userresponses": [{"userid": 9, "fullname": "Other One"}], "numberofuser": 1}, {"id": 0, "text": "Not answered yet"}]}
+    c = run(md.choice(50, 2))
+    assert c["name"] == "Termin & Co" and not c["answered"] and c["canAnswer"]
+    assert c["options"][0] == {"id": 1, "text": "A & B", "checked": False, "disabled": True, "count": 2, "max": 2, "people": ["Other One"]}
+    with pytest.raises(md.MoodleError):
+        run(md.answer_choice(50, 2, [1, 2]))
+    fake.answers["mod_choice_submit_choice_response"] = {"answers": [], "warnings": []}
+    run(md.answer_choice(50, 2, [2]))
+    assert fake.calls[-1] == ("mod_choice_submit_choice_response", {"choiceid": "5", "responses[0]": "2"})
+    # picked and no changing allowed: read only; my pick is also found through the published results
+    fake.answers["mod_choice_get_choice_results"] = {"options": [{"id": 2, "text": "C", "userresponses": [{"userid": 7, "fullname": "Me"}], "numberofuser": 1}]}
+    c = run(md.choice(50, 2))
+    assert c["answered"] and not c["canAnswer"] and c["options"][1]["checked"]
+    # closed: no options from Moodle, the rows come from the results, with the reason
+    fake.answers["mod_choice_get_choice_options"] = {"options": [], "warnings": [{"message": "This activity closed"}]}
+    md.drop_cache()
+    c = run(md.choice(50, 2))
+    assert c["note"] == "This activity closed" and not c["canAnswer"] and [o["id"] for o in c["options"]] == [2]
+
+
 def test_office_text():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
