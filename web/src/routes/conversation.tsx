@@ -16,6 +16,15 @@ import { cn } from '@/lib/utils'
 
 export function ConversationPage() {
   const { id } = useParams({ from: '/shell/chats/$id' })
+  return <Conversation id={id} back="/chats" />
+}
+
+export function ChannelPage() {
+  const { id } = useParams({ from: '/shell/teams/$id' })
+  return <Conversation id={id} back="/teams" />
+}
+
+function Conversation({ id, back }: { id: string; back: '/chats' | '/teams' }) {
   const chats = useQuery(q.chats())
   const teams = useQuery({ ...q.teams(), enabled: !!chats.data && !chats.data.some((c) => c.id === id) })
   const chat = chats.data?.find((c) => c.id === id)
@@ -97,7 +106,7 @@ export function ConversationPage() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b px-3">
-        <Link to="/chats" className="-ml-1 rounded-md p-1.5 hover:bg-white/10 md:hidden" aria-label="Back">
+        <Link to={back} className="-ml-1 rounded-md p-1.5 hover:bg-white/10 md:hidden" aria-label="Back">
           <ArrowLeft className="size-5" />
         </Link>
         {title && <Avatar name={title} kind={kind} className="size-8 text-xs" />}

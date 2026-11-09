@@ -21,7 +21,7 @@ export function AppShell() {
     document.title = unread ? `(${unread}) Teams` : 'Teams'
   }, [unread])
   // On phones a detail page covers the whole screen, without the bottom bar
-  const detail = useRouterState({ select: (s) => /^\/(chats|assignments\/[^/]+)\/[^/]+/.test(s.location.pathname) })
+  const detail = useRouterState({ select: (s) => /^\/(chats|teams|assignments\/[^/]+)\/[^/]+/.test(s.location.pathname) })
 
   return (
     <div className="flex h-full flex-col md:flex-row">

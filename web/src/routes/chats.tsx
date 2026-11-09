@@ -14,7 +14,6 @@ const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'unread', label: 'Unread' },
   { key: 'chat', label: 'Chats' },
-  { key: 'channel', label: 'Channels' },
   { key: 'meeting', label: 'Meetings' },
 ] as const
 
@@ -49,6 +48,7 @@ function ChatList({ className }: { className?: string }) {
     const t = term.trim().toLowerCase()
     return (chats.data ?? []).filter(
       (c) =>
+        c.kind !== 'channel' &&
         (filter === 'all' || (filter === 'unread' ? c.unread : c.kind === filter)) &&
         (!t || c.title.toLowerCase().includes(t)),
     )

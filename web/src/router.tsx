@@ -49,7 +49,19 @@ const chatRoute = createRoute({
 const teamsRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: '/teams',
-  component: lazyRouteComponent(() => import('@/routes/teams'), 'TeamsPage'),
+  component: lazyRouteComponent(() => import('@/routes/teams'), 'TeamsLayout'),
+})
+
+const teamsIndexRoute = createRoute({
+  getParentRoute: () => teamsRoute,
+  path: '/',
+  component: lazyRouteComponent(() => import('@/routes/teams'), 'NoChannel'),
+})
+
+const channelRoute = createRoute({
+  getParentRoute: () => teamsRoute,
+  path: '$id',
+  component: lazyRouteComponent(() => import('@/routes/conversation'), 'ChannelPage'),
 })
 
 const assignmentsRoute = createRoute({
@@ -77,7 +89,7 @@ const routeTree = rootRoute.addChildren([
   shellRoute.addChildren([
     indexRoute,
     chatsRoute.addChildren([chatsIndexRoute, chatRoute]),
-    teamsRoute,
+    teamsRoute.addChildren([teamsIndexRoute, channelRoute]),
     assignmentsRoute,
     assignmentRoute,
     settingsRoute,
