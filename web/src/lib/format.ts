@@ -47,7 +47,8 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 export function safeHtml(html: string): string {
   return DOMPurify.sanitize(html, {
     FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe'],
-    FORBID_ATTR: ['style', 'class', 'id'],
+    // color, bgcolor and co: Outlook mail sets black text (<font color>) that is unreadable on the dark theme
+    FORBID_ATTR: ['style', 'class', 'id', 'color', 'bgcolor', 'background', 'face', 'size', 'text', 'link', 'vlink'],
   })
 }
 
