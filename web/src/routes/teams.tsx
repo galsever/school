@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, Outlet, useRouterState } from '@tanstack/react-router'
+import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRight, Hash, Search, Users } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
@@ -40,6 +40,7 @@ function TeamList({ active, className }: { active: string | null; className?: st
   const chats = useQuery(q.chats())
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [term, setTerm] = useState('')
+  const navigate = useNavigate()
 
   // channels with unread messages (only those with activity show up in the chat service list)
   const unread = useMemo(
@@ -89,14 +90,17 @@ function TeamList({ active, className }: { active: string | null; className?: st
             <Collapsible
               key={t.id}
               open={isOpen}
-              onOpenChange={(o) =>
+              onOpenChange={(o) => {
                 setOpen((s) => {
                   const n = new Set(s)
                   if (o) n.add(t.id)
                   else n.delete(t.id)
                   return n
                 })
-              }
+                // opening a team shows its main channel (with the class assignments next to it)
+                const main = t.channels.find((c) => c.name === 'General' || c.name === 'Allgemein') ?? t.channels[0]
+                if (o && main && !t.channels.some((c) => c.id === active)) void navigate({ to: '/teams/$id', params: { id: main.id } })
+              }}
             >
               <CollapsibleTrigger className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/5">
                 <Avatar name={t.name} className="size-8 rounded-lg text-xs" />

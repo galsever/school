@@ -21,17 +21,27 @@ const STATUS: Record<string, string> = {
 
 export function AssignmentPage() {
   const { classId, id } = useParams({ from: '/shell/assignments/$classId/$id' })
-  const a = useQuery(q.assignment(classId, id))
-  const instructions = useMemo(() => safeHtml(a.data?.instructions ?? ''), [a.data?.instructions])
-  const due = dueText(a.data?.due ?? null)
-  const sub = a.data?.submission
-
   return (
     <div className="tm-scroll h-full overflow-y-auto">
       <div className="mx-auto max-w-2xl p-3 md:p-6">
         <Link to="/assignments" className="mb-3 inline-flex items-center gap-1 rounded-md p-1.5 text-sm text-muted-foreground hover:bg-white/10">
           <ArrowLeft className="size-4" /> Assignments
         </Link>
+        <AssignmentView classId={classId} id={id} />
+      </div>
+    </div>
+  )
+}
+
+/** Assignment details with "My work"; used on its own page and in a channel's class panel. */
+export function AssignmentView({ classId, id, compact }: { classId: string; id: string; compact?: boolean }) {
+  const a = useQuery(q.assignment(classId, id))
+  const instructions = useMemo(() => safeHtml(a.data?.instructions ?? ''), [a.data?.instructions])
+  const due = dueText(a.data?.due ?? null)
+  const sub = a.data?.submission
+
+  return (
+    <>
         {a.isError && <ErrorView error={a.error} retry={() => void a.refetch()} />}
         {a.isPending && (
           <>
@@ -42,8 +52,8 @@ export function AssignmentPage() {
         )}
         {a.data && (
           <>
-            <p className="text-sm text-muted-foreground">{a.data.className}</p>
-            <h1 className="mt-1 text-2xl font-semibold">{a.data.title}</h1>
+            {!compact && <p className="text-sm text-muted-foreground">{a.data.className}</p>}
+            <h1 className={cn('font-semibold', compact ? 'text-lg' : 'mt-1 text-2xl')}>{a.data.title}</h1>
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
               <span className={cn(!a.data.done && due.late && 'text-destructive')}>Due {longTime(a.data.due) || 'never'}</span>
               {a.data.points != null && <span className="text-muted-foreground">{a.data.points} points</span>}
@@ -78,8 +88,7 @@ export function AssignmentPage() {
             )}
           </>
         )}
-      </div>
-    </div>
+    </>
   )
 }
 

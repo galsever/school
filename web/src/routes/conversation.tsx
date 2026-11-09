@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearch } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ExternalLink, FileText, Loader2, SendHorizontal } from 'lucide-react'
+import { ArrowLeft, ClipboardList, ExternalLink, FileText, Loader2, SendHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar } from '@/components/Avatar'
 import { ErrorView } from '@/components/ErrorView'
@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { api, errorText } from '@/lib/api'
 import { ChannelFiles } from '@/routes/files'
+import { ClassAssignments } from '@/routes/classwork'
 import { longTime, safeHtml, shortTime } from '@/lib/format'
 import { q, queryClient } from '@/lib/query'
 import type { Card, Message, MessageFile } from '@/lib/types'
@@ -45,6 +46,20 @@ function Conversation({
   const kind = chat?.kind ?? (channel ? 'channel' : 'chat')
 
   const latest = useQuery(q.messages(id))
+  const assignments = useQuery({ ...q.assignments(), enabled: !!channelTab?.teamId })
+  const openCount = channelTab?.teamId
+    ? (assignments.data ?? []).filter((a) => a.classId === channelTab.teamId && !a.done && !(a.closes && Date.parse(a.closes) < Date.now())).length
+    : 0
+  // open by default only where it fits next to the posts
+  const [panel, setPanel] = useState(() => {
+    const v = localStorage.getItem('tm-class-panel')
+    return v === null ? matchMedia('(min-width: 1024px)').matches : v === '1'
+  })
+  const togglePanel = (v: boolean) => {
+    localStorage.setItem('tm-class-panel', v ? '1' : '0')
+    setPanel(v)
+  }
+  const showPanel = !!channelTab?.teamId && panel
   const [older, setOlder] = useState<Message[]>([])
   const [cursor, setCursor] = useState<string | null | undefined>(undefined)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -125,6 +140,24 @@ function Conversation({
         </Link>
         {title && <Avatar name={title} kind={kind} className="size-8 text-xs" />}
         <h1 className="min-w-0 flex-1 truncate font-semibold">{title}</h1>
+        {channelTab?.teamId && (
+          <button
+            onClick={() => togglePanel(!panel)}
+            className={cn(
+              'relative flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors',
+              panel ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-white/10 hover:text-foreground',
+            )}
+            aria-label="Assignments"
+          >
+            <ClipboardList className="size-4" />
+            <span className="hidden sm:inline">Assignments</span>
+            {openCount > 0 && (
+              <span className="min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 font-semibold text-primary-foreground">
+                {openCount}
+              </span>
+            )}
+          </button>
+        )}
         {channelTab && (
           <div className="flex shrink-0 rounded-lg bg-secondary p-0.5 text-sm">
             {(['Posts', 'Files'] as const).map((label) => {
@@ -148,6 +181,8 @@ function Conversation({
           </div>
         )}
       </header>
+      <div className="flex min-h-0 flex-1">
+      <div className={cn('flex min-w-0 flex-1 flex-col', showPanel && 'hidden lg:flex')}>
       {channelTab?.files ? (
         channelTab.teamId ? (
           <ChannelFiles teamId={channelTab.teamId} channelId={id} />
@@ -181,6 +216,13 @@ function Conversation({
       <Composer onSend={send} key={id} />
         </>
       )}
+      </div>
+      {showPanel && (
+        <div className="w-full shrink-0 border-l lg:w-96">
+          <ClassAssignments key={channelTab!.teamId} classId={channelTab!.teamId!} onClose={() => togglePanel(false)} />
+        </div>
+      )}
+      </div>
     </div>
   )
 }
