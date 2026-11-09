@@ -17,3 +17,8 @@ All JSON. Errors: `{"error": code, "detail": text}`; `401 login_required` (app p
 | GET | `/api/assignments/{classId}/{id}` | assignment with instructions, resources and own submission |
 
 Types: `web/src/lib/types.ts`.
+
+## MCP
+
+`POST /api/mcp`: MCP over streamable HTTP (stateless JSON-RPC), bearer token from `DATA_DIR/mcp-token`. Not behind the Pocket ID gate (personal-infra `apps/teams/mcp-route.yaml`), tailnet only.
+Tools: `list_chats`, `read_messages`, `send_message` (only write tool), `list_teams`, `list_files`, `read_file` (PDF/Office text), `list_assignments`, `get_assignment`. No turn-in or uploads by design.

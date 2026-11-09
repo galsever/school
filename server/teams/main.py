@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-from . import auth, config, upstream
+from . import auth, config, mcp, upstream
 from .ms import NotConnected, session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -238,6 +238,11 @@ async def open_file(url: str):
     if not url.startswith(upstream.GRAPH_URL + "/drives/"):
         raise HTTPException(400, {"error": "bad_url", "detail": "Not a drive item"})
     return RedirectResponse(await upstream.file_web_url(url), status_code=302)
+
+
+# ---- MCP (own bearer token, no app login) ------------------------------------------
+
+app.add_api_route("/api/mcp", mcp.handle, methods=["GET", "POST", "DELETE"], include_in_schema=False)
 
 
 # ---- website -----------------------------------------------------------------
