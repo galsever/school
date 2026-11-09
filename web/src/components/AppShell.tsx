@@ -46,7 +46,7 @@ export function AppShell() {
   const badge = (to: string) => (to === '/chats' ? unread : to === '/mail' ? mailUnread : 0)
   useNotifications(chats.data)
   useEffect(() => {
-    document.title = unread ? `(${unread}) Teams` : 'Teams'
+    document.title = unread ? `(${unread}) School` : 'School'
   }, [unread])
   // On phones a detail page covers the whole screen, without the bottom bar
   const detail = useRouterState({ select: (s) => /^\/(chats|teams|mail|assignments\/[^/]+)\/[^/]+/.test(s.location.pathname) })

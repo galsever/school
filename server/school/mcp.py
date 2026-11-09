@@ -1,7 +1,7 @@
 """MCP server (streamable HTTP, stateless JSON-RPC) at /api/mcp: the school Teams account and the WebUntis absences as tools for Claude.
 
 Read everything, send messages and mail. No turn-in or uploads (his decision 2026-11-09). Own bearer token
-(DATA_DIR/mcp-token): the route skips the Pocket ID gate (personal-infra apps/teams/mcp-route.yaml), tailnet only.
+(DATA_DIR/mcp-token): the route skips the Pocket ID gate (personal-infra apps/school-hub/mcp-route.yaml), tailnet only.
 """
 
 import hmac

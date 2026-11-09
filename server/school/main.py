@@ -1,4 +1,4 @@
-"""Teams API server. Contract: docs/API.md."""
+"""School hub API server (Teams, mail, assignments, absences). Contract: docs/API.md."""
 
 import asyncio
 import logging
@@ -12,10 +12,22 @@ from . import absences_api, auth, config, mail, mcp, prefs, upstream
 from .ms import NotConnected, session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-log = logging.getLogger("teams")
+log = logging.getLogger("school")
 
-app = FastAPI(title="Teams", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="School", docs_url=None, redoc_url=None, openapi_url=None)
 guard = [Depends(auth.require)]
+
+
+@app.middleware("http")
+async def _canonical_host(request: Request, call_next):
+    """Pages opened on an old host name move to CANONICAL_HOST; API and MCP calls are answered on any name."""
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(":")[0]
+    path = request.url.path
+    if config.CANONICAL_HOST and host.endswith(".galsever.com") and host != config.CANONICAL_HOST and request.method == "GET":
+        if not path.startswith(("/api/", "/oauth2/")) and path != "/healthz":
+            query = f"?{request.url.query}" if request.url.query else ""
+            return RedirectResponse(f"https://{config.CANONICAL_HOST}{path}{query}", status_code=308)
+    return await call_next(request)
 
 
 @app.exception_handler(HTTPException)
@@ -56,7 +68,7 @@ def app_handoff(request: Request, state: str = ""):
     if not cookie or not state or len(state) > 64:
         raise HTTPException(400, "no gate session")
     return RedirectResponse(
-        "com.galsever.teams://auth?" + urlencode({"state": state, "c": cookie}),
+        "com.galsever.school://auth?" + urlencode({"state": state, "c": cookie}),
         status_code=302,
         headers={"Cache-Control": "no-store"},
     )

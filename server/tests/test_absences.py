@@ -1,8 +1,8 @@
 """Absence model, attendance stats and the letter, on a small made-up WebUntis pull."""
 
-from teams import absences as ab
-from teams import letter
-from teams.untis import chunks
+from school import absences as ab
+from school import letter
+from school.untis import chunks
 
 GRID = [
     {"name": "1", "startTime": 800, "endTime": 850},

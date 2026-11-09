@@ -1,18 +1,20 @@
-name: teams
+name: school
 
 services:
   app:
     build: .
     restart: unless-stopped
     environment:
-      # No own login: Pocket ID gate in front (personal-infra apps/teams), and only the k3s nodes
+      # No own login: Pocket ID gate in front (personal-infra apps/school-hub), and only the k3s nodes
       # may reach the app port on ghs (personal-infra hosts/ghs firewall).
       APP_AUTH: none
+      # Browsers on the old name teams.galsever.com are sent here (API and MCP calls are answered on both).
+      CANONICAL_HOST: school.galsever.com
     volumes:
-      # Microsoft refresh token (school account): back it up like a password
+      # Microsoft refresh token and WebUntis login (school accounts): back it up like a password
       - data:/data
     ports:
-      # Reached only through https://teams.galsever.com (k3s relay); the ghs firewall drops everyone else.
+      # Reached only through https://school.galsever.com (k3s relay); the ghs firewall drops everyone else.
       - "8788:8000"
     tmpfs:
       - /tmp

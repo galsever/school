@@ -7,6 +7,8 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 WEB_DIR = Path(os.environ.get("WEB_DIR", "/app/web"))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "1") == "1"
+# The public host name; page requests on any other name (the old teams.galsever.com) are redirected to it.
+CANONICAL_HOST = os.environ.get("CANONICAL_HOST", "")
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 

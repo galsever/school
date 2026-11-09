@@ -15,7 +15,7 @@ import httpx
 
 from . import config
 
-log = logging.getLogger("teams.ms")
+log = logging.getLogger("school.ms")
 
 CLIENT_ID = "1fec8e78-bce4-4aaf-ab1b-5451cc387264"  # Microsoft Teams public client
 AUTHORITY = "https://login.microsoftonline.com/organizations/oauth2/v2.0"

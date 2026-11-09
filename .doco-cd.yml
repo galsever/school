@@ -1,4 +1,4 @@
-name: teams
+name: school
 compose_files: [compose.yaml]
 timeout: 15m
 remove_orphans: true
