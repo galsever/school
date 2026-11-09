@@ -99,6 +99,7 @@ export const moodleApi = {
   /** Empties the server's short cache: the next reads ask Moodle again. */
   refresh: () => post(`${base}/refresh`),
   course: (id: number) => request<MoodleCourseContent>(`${base}/courses/${id}`),
+  grades: (id: number) => request<MoodleGrade[]>(`${base}/courses/${id}/grades`),
   assignment: (cmid: number, course: number) => request<MoodleAssignment>(`${base}/assignments/${cmid}?course=${course}`),
   page: (url: string) => request<{ html: string }>(`${base}/page?url=${enc(url)}`),
   upload: (file: File) =>
@@ -155,6 +156,13 @@ export const moodleQ = {
       queryFn: () => keep(`course:${id}`, () => moodleApi.course(id)),
       staleTime: STALE,
       ...kept<MoodleCourseContent>(`course:${id}`),
+    }),
+  grades: (id: number) =>
+    queryOptions({
+      queryKey: ['moodle', 'grades', id],
+      queryFn: () => keep(`grades:${id}`, () => moodleApi.grades(id)),
+      staleTime: STALE,
+      ...kept<MoodleGrade[]>(`grades:${id}`),
     }),
   assignment: (cmid: number, course: number) =>
     queryOptions({ queryKey: ['moodle', 'assignment', cmid], queryFn: () => moodleApi.assignment(cmid, course), staleTime: STALE }),

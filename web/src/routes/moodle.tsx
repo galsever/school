@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useNavigate, useParams, useRouterState, useSearch } from '@tanstack/react-router'
 import { useIsFetching, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -140,12 +140,13 @@ function CourseList({ active, className }: { active: number | null; className?: 
 
   return (
     <aside className={cn('flex min-h-0 flex-col', className)}>
-      <div className="flex shrink-0 items-center gap-1 p-3 pb-2">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-8" placeholder="Search" aria-label="Search" value={term} onChange={(e) => setTerm(e.target.value)} />
-        </div>
+      <div className="flex h-14 shrink-0 items-center gap-2 px-4">
+        <h1 className="flex-1 text-xl font-semibold">Moodle</h1>
         <ReloadButton />
+      </div>
+      <div className="relative mx-3 mb-2">
+        <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input className="pl-8" placeholder="Search" aria-label="Search" value={term} onChange={(e) => setTerm(e.target.value)} />
       </div>
       <div className="tm-scroll min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
         {home.isError &&
@@ -178,9 +179,9 @@ function CourseList({ active, className }: { active: number | null; className?: 
               key={c.id}
               to="/moodle/$courseId"
               params={{ courseId: String(c.id) }}
-              className={cn('flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-white/5', active === c.id && 'bg-white/10')}
+              className={cn('flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-white/5', active === c.id && 'bg-white/10')}
             >
-              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/15 text-[11px] font-semibold text-primary">{code}</span>
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/15 text-[11px] font-semibold text-primary">{code}</span>
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
               {c.grade && <span className="shrink-0 text-xs text-muted-foreground">{c.grade}</span>}
             </Link>
@@ -280,25 +281,27 @@ function moduleIcon(m: MoodleModule) {
 
 export function CoursePage() {
   const { courseId } = useParams({ from: '/shell/moodle/$courseId' })
-  const { a } = useSearch({ from: '/shell/moodle/$courseId' })
+  const { a, tab } = useSearch({ from: '/shell/moodle/$courseId' })
   const id = Number(courseId)
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const home = useQuery(moodleQ.home())
   const course = useQuery(moodleQ.course(id))
   const meta = home.data?.courses.find((c) => c.id === id)
   const { code, title } = courseTitle({ name: course.data?.name || meta?.name || '', short: meta?.short })
-  const qc = useQueryClient()
+  const go = (search: { a?: number; tab?: 'grades' }, replace = true) =>
+    void navigate({ to: '/moodle/$courseId', params: { courseId }, search, replace })
   // Opening an assignment is its own history step, so Back (and the phone's back gesture) returns to the course.
   const stepped = useRef(false)
   const open = (cmid: number) => {
     if (a == null) stepped.current = true
-    void navigate({ to: '/moodle/$courseId', params: { courseId }, search: { a: cmid }, replace: a != null })
+    go({ a: cmid, tab }, a != null)
   }
   const close = () => {
     if (stepped.current) {
       stepped.current = false
       history.back()
-    } else void navigate({ to: '/moodle/$courseId', params: { courseId }, search: {}, replace: true })
+    } else go(tab ? { tab } : {})
   }
   useEffect(() => localStorage.setItem(LAST, String(id)), [id])
   const due = (home.data?.due ?? []).filter((d) => d.courseId === id)
@@ -312,10 +315,26 @@ export function CoursePage() {
             <ArrowLeft className="size-5" />
           </Link>
           <h1 className="min-w-0 flex-1 truncate font-semibold">
-            {title}
-            {code && title !== code && <span className="ml-2 text-sm font-normal text-muted-foreground">{code}</span>}
+            <span className="md:hidden">{code || title}</span>
+            <span className="hidden md:inline">{title}</span>
+            {code && title !== code && <span className="ml-2 hidden text-sm font-normal text-muted-foreground md:inline">{code}</span>}
           </h1>
-          {total && <span className="shrink-0 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-semibold text-primary tabular-nums">{total}</span>}
+          {(['Course', 'Grades'] as const).map((label) => {
+            const on = (label === 'Grades') === (tab === 'grades')
+            return (
+              <button
+                key={label}
+                onClick={() => go(label === 'Grades' ? { tab: 'grades' } : {})}
+                className={cn(
+                  'rounded-md px-3 py-1 text-sm font-medium',
+                  on ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-white/5 hover:text-foreground',
+                )}
+              >
+                {label}
+                {label === 'Grades' && total && <span className="ml-1.5 font-semibold text-primary tabular-nums">{total}</span>}
+              </button>
+            )
+          })}
           <a
             href={`https://moodle.spengergasse.at/course/view.php?id=${id}`}
             target="_blank"
@@ -328,32 +347,29 @@ export function CoursePage() {
           </a>
         </header>
         <div className="tm-scroll min-h-0 flex-1 overflow-y-auto">
-          <div className="max-w-3xl px-2 pb-10 md:px-4">
-            {course.isError && !course.data && <ErrorView error={course.error} retry={() => void course.refetch()} />}
-            {course.isPending && Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="mt-2 h-10 rounded-lg" />)}
-            {due.length > 0 && (
-              <section>
-                <SectionHeading>Open</SectionHeading>
-                {due.map((d) => (
-                  <DueRow key={d.url} d={d} />
-                ))}
-              </section>
-            )}
-            {course.data && (
-              <Sections
-                course={course.data}
-                active={a}
-                open={open}
-                warm={(cmid) => void qc.prefetchQuery(moodleQ.assignment(cmid, id))}
-              />
-            )}
-            {!!course.data?.grades?.length && (
-              <section>
-                <SectionHeading>Grades</SectionHeading>
-                {course.data.grades.map((g, i) => (
-                  <GradeRow key={i} g={g} />
-                ))}
-              </section>
+          <div className="mx-auto max-w-3xl px-2 py-4 pb-10 md:px-6">
+            {tab === 'grades' ? (
+              <Grades courseId={id} open={open} />
+            ) : (
+              <>
+                {course.isError && !course.data && <ErrorView error={course.error} retry={() => void course.refetch()} />}
+                {course.isPending && Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="mt-2 h-10 rounded-lg" />)}
+                {due.length > 0 && (
+                  <Card title="Open">
+                    {due.map((d) => (
+                      <DueRow key={d.url} d={d} />
+                    ))}
+                  </Card>
+                )}
+                {course.data && (
+                  <Sections
+                    course={course.data}
+                    active={a}
+                    open={open}
+                    warm={(cmid) => void qc.prefetchQuery(moodleQ.assignment(cmid, id))}
+                  />
+                )}
+              </>
             )}
           </div>
         </div>
@@ -367,8 +383,18 @@ export function CoursePage() {
   )
 }
 
-function SectionHeading({ children }: { children: React.ReactNode }) {
-  return <h2 className="sticky top-0 z-10 bg-background px-2 pt-5 pb-2 text-sm font-semibold">{children}</h2>
+/** A course section the way Moodle shows it: a card with its name, folding on a click on the heading. */
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <section className="mb-3 rounded-xl border bg-card/40">
+      <button className="flex w-full items-center gap-2 px-3 py-3 text-left" onClick={() => setOpen((v) => !v)}>
+        <ChevronRight className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
+        <h2 className="min-w-0 flex-1 font-semibold">{title}</h2>
+      </button>
+      {open && <div className="px-2 pb-2">{children}</div>}
+    </section>
+  )
 }
 
 function Sections({
@@ -383,15 +409,10 @@ function Sections({
   warm: (cmid: number) => void
 }) {
   const [zoom, setZoom] = useState<string | null>(null)
-  // Teachers add the newest topic at the bottom: it goes on top here, and the general section (number 0) last.
-  const sections = useMemo(
-    () => [...course.sections].sort((x, y) => (x.number === 0 ? 1 : y.number === 0 ? -1 : y.number - x.number)),
-    [course.sections],
-  )
   // a search hit points at an activity with #m<cmid>
   const hash = useRouterState({ select: (s) => s.location.hash })
   useEffect(() => {
-    // after the router's own scroll, which puts the row under the sticky heading
+    // after the router's own scroll
     const t = setTimeout(() => hash && document.getElementById(hash)?.scrollIntoView({ block: 'center' }), 50)
     return () => clearTimeout(t)
   }, [hash, course.id])
@@ -403,14 +424,13 @@ function Sections({
         if (el.tagName === 'IMG' && el.closest('.tm-msg')) setZoom((el as HTMLImageElement).src)
       }}
     >
-      {sections.map((s) => (
-        <section key={s.id}>
-          <SectionHeading>{s.name}</SectionHeading>
-          {s.summary && <Clamp html={s.summary} className="px-2 pb-2 text-sm text-muted-foreground" />}
+      {course.sections.map((s) => (
+        <Card key={s.id} title={s.name}>
+          {s.summary && <Html html={s.summary} className="px-2 pb-2 text-sm text-muted-foreground" />}
           {s.modules.map((m) => (
             <ModuleRow key={m.cmid} m={m} active={active === m.cmid} target={hash === `m${m.cmid}`} open={open} warm={warm} />
           ))}
-        </section>
+        </Card>
       ))}
       <Lightbox src={zoom} onClose={() => setZoom(null)} />
     </div>
@@ -423,32 +443,23 @@ function Html({ html, className }: { html: string; className?: string }) {
   return <div className={cn('tm-msg overflow-x-auto leading-relaxed', className)} dangerouslySetInnerHTML={{ __html: clean }} />
 }
 
-/** Teacher text (labels, section summaries) shows two lines; a click on it or on the arrow opens the rest. */
-function Clamp({ html, className }: { html: string; className?: string }) {
-  const box = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
-  const [long, setLong] = useState(false)
-  useLayoutEffect(() => {
-    const el = box.current
-    if (el && !open) setLong(el.scrollHeight > el.clientHeight + 4)
-  }, [html, open])
+// activity colours like Moodle's: hand-in pink, material blue, links and talk green, the rest grey
+const TONES: Record<string, string> = {
+  assign: 'bg-pink-500/15 text-pink-400',
+  quiz: 'bg-pink-500/15 text-pink-400',
+  resource: 'bg-sky-500/15 text-sky-400',
+  folder: 'bg-sky-500/15 text-sky-400',
+  page: 'bg-sky-500/15 text-sky-400',
+  url: 'bg-emerald-500/15 text-emerald-400',
+  forum: 'bg-emerald-500/15 text-emerald-400',
+  other: 'bg-white/5 text-muted-foreground',
+}
+
+function Tile({ icon: Icon, tone }: { icon: typeof File; tone: string }) {
   return (
-    <div
-      className={cn('flex items-start gap-1', long && 'cursor-pointer', className)}
-      onClick={(e) => {
-        const tag = (e.target as HTMLElement).closest('a, img, button')
-        if (long && !tag) setOpen((v) => !v)
-      }}
-    >
-      <div ref={box} className={cn('min-w-0 flex-1', !open && 'max-h-[2.9rem] overflow-hidden')}>
-        <Html html={html} />
-      </div>
-      {long && (
-        <button className="shrink-0 rounded p-1 text-muted-foreground hover:bg-white/10 hover:text-foreground" onClick={() => setOpen((v) => !v)} aria-label={open ? 'Less' : 'More'}>
-          <ChevronRight className={cn('size-4 transition-transform', open && 'rotate-90')} />
-        </button>
-      )}
-    </div>
+    <span className={cn('grid size-8 shrink-0 place-items-center rounded-lg', tone)}>
+      <Icon className="size-[18px]" strokeWidth={1.75} />
+    </span>
   )
 }
 
@@ -457,9 +468,9 @@ const rowCls = 'flex min-w-0 flex-1 items-center gap-3 px-2 py-2 text-left'
 function FileRow({ f, indent, target }: { f: MoodleFile; indent?: boolean; target?: boolean }) {
   const Icon = iconFor(f.name)
   return (
-    <div className={cn('group relative flex items-center rounded-lg text-sm transition-colors hover:bg-white/5', indent && 'ml-7', target && 'bg-white/10')}>
+    <div className={cn('group relative flex items-center rounded-lg text-sm transition-colors hover:bg-white/5', indent && 'ml-10', target && 'bg-white/10')}>
       <a className={rowCls} href={f.view} target="_blank" rel="noopener noreferrer">
-        <Icon className="size-5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+        <Tile icon={Icon} tone={TONES.resource} />
         <span className="min-w-0 flex-1 truncate">{f.name}</span>
         <span className="hidden shrink-0 text-xs text-muted-foreground group-hover:invisible sm:block">{sizeText(f.size)}</span>
       </a>
@@ -488,24 +499,24 @@ function ModuleRow({
   open: (cmid: number) => void
   warm: (cmid: number) => void
 }) {
-  const [expanded, setExpanded] = useState(target)
+  const [expanded, setExpanded] = useState(target || (m.type === 'folder' && m.files.length <= 6))
   useEffect(() => {
     if (target) setExpanded(true)
   }, [target])
   const id = `m${m.cmid}`
-  if (m.type === 'label') return <Clamp html={m.description} className="px-2 py-2 text-sm text-muted-foreground" />
+  if (m.type === 'label') return <Html html={m.description} className="px-2 py-2 text-sm" />
 
   const Icon = moduleIcon(m)
   const due = m.dates.find((d) => d.id === 'duedate')?.time ?? null
   const dueInfo = due ? dueText(due) : null
   const name = (
     <>
-      <Icon className={cn('size-5 shrink-0', m.type === 'assign' || m.type === 'folder' ? 'text-primary' : 'text-muted-foreground')} strokeWidth={1.75} />
+      <Tile icon={Icon} tone={TONES[m.type] ?? TONES.other} />
       <span className="min-w-0 flex-1 truncate">{m.name}</span>
     </>
   )
   const wrap = (child: React.ReactNode, below?: React.ReactNode) => (
-    <div id={id} className="scroll-mt-14">
+    <div id={id}>
       <div className={cn('group flex items-center rounded-lg text-sm transition-colors hover:bg-white/5', (active || target) && 'bg-white/10')}>{child}</div>
       {below}
     </div>
@@ -514,7 +525,7 @@ function ModuleRow({
   if (m.restricted)
     return wrap(
       <div className={cn(rowCls, 'text-muted-foreground')} title={m.restricted}>
-        <Lock className="size-5 shrink-0" strokeWidth={1.75} />
+        <Tile icon={Lock} tone={TONES.other} />
         <span className="min-w-0 flex-1 truncate">{m.name}</span>
       </div>,
     )
@@ -536,7 +547,7 @@ function ModuleRow({
         )}
       </button>,
     )
-  if (m.type === 'resource' && m.files.length === 1) return <div id={id} className="scroll-mt-14"><FileRow f={{ ...m.files[0], name: m.name }} target={target} /></div>
+  if (m.type === 'resource' && m.files.length === 1) return <div id={id}><FileRow f={{ ...m.files[0], name: m.name }} target={target} /></div>
   if (m.type === 'folder' || (m.type === 'resource' && m.files.length > 1))
     return wrap(
       <button className={rowCls} onClick={() => setExpanded((v) => !v)}>
@@ -565,23 +576,45 @@ function ModuleRow({
 
 function PageBody({ url }: { url: string }) {
   const page = useQuery(moodleQ.page(url))
-  if (page.isPending) return <Skeleton className="mx-2 my-2 ml-9 h-16 rounded-lg" />
+  if (page.isPending) return <Skeleton className="mx-2 my-2 ml-12 h-16 rounded-lg" />
   if (page.isError) return <ErrorView error={page.error} retry={() => void page.refetch()} />
-  return <Html html={page.data.html} className="mb-2 ml-9 rounded-lg bg-card p-3 text-sm" />
+  return <Html html={page.data.html} className="mb-2 ml-12 rounded-lg bg-card p-3 text-sm" />
 }
 
-/** A graded item that is not an assignment row (tests, manual items, category totals). */
-function GradeRow({ g }: { g: MoodleGrade }) {
+function Grades({ courseId, open }: { courseId: number; open: (cmid: number) => void }) {
+  const grades = useQuery(moodleQ.grades(courseId))
+  if (grades.isError && !grades.data) return <ErrorView error={grades.error} retry={() => void grades.refetch()} />
+  if (grades.isPending) return <>{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="mt-2 h-12 rounded-lg" />)}</>
+  if (!grades.data.length) return <p className="p-10 text-center text-muted-foreground">No grades</p>
   return (
-    <div className="flex items-start gap-3 px-2 py-2">
+    <section className="rounded-xl border bg-card/40 p-2">
+      {grades.data.map((g, i) => (
+        <GradeRow key={i} g={g} open={g.type === 'assign' && g.cmid ? () => open(g.cmid!) : undefined} />
+      ))}
+    </section>
+  )
+}
+
+function GradeRow({ g, open }: { g: MoodleGrade; open?: () => void }) {
+  const graded = g.grade !== '-'
+  const body = (
+    <>
       <span className="min-w-0 flex-1">
         <span className={cn('block truncate text-sm', g.total && 'font-semibold')}>{g.name}</span>
         {g.feedback && <span className="mt-0.5 block text-xs whitespace-pre-line text-muted-foreground">{g.feedback}</span>}
       </span>
       <span className="shrink-0 text-right">
-        <span className="block text-sm font-semibold tabular-nums">{g.grade}</span>
-        {g.range && <span className="block text-xs text-muted-foreground tabular-nums">{g.range}</span>}
+        <span className={cn('block text-sm tabular-nums', graded ? 'font-semibold' : 'text-muted-foreground')}>{g.grade}</span>
+        {graded && g.range && <span className="block text-xs text-muted-foreground tabular-nums">{g.range}</span>}
       </span>
-    </div>
+    </>
+  )
+  const cls = cn('flex w-full items-start gap-3 rounded-lg px-2 py-2 text-left', g.total && 'mt-1 border-t pt-3')
+  return open ? (
+    <button className={cn(cls, 'transition-colors hover:bg-white/5')} onClick={open}>
+      {body}
+    </button>
+  ) : (
+    <div className={cls}>{body}</div>
   )
 }
