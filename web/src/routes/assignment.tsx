@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Link, useParams } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ExternalLink, FileText, Link2, Loader2, Paperclip, Undo2, X } from 'lucide-react'
+import { ArrowLeft, CalendarClock, ExternalLink, FileText, Link2, Loader2, Paperclip, Star, Undo2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ErrorView } from '@/components/ErrorView'
 import { Button } from '@/components/ui/button'
@@ -24,7 +24,7 @@ export function AssignmentPage() {
   return (
     <div className="tm-scroll h-full overflow-y-auto">
       <div className="mx-auto max-w-2xl p-3 md:p-6">
-        <Link to="/assignments" className="mb-3 inline-flex items-center gap-1 rounded-md p-1.5 text-sm text-muted-foreground hover:bg-white/10">
+        <Link to="/assignments" className="-ml-1.5 mb-4 inline-flex items-center gap-1 rounded-md p-1.5 text-sm text-muted-foreground hover:bg-white/10 hover:text-foreground">
           <ArrowLeft className="size-4" /> Assignments
         </Link>
         <AssignmentView classId={classId} id={id} />
@@ -52,12 +52,47 @@ export function AssignmentView({ classId, id, compact }: { classId: string; id: 
         )}
         {a.data && (
           <>
-            {!compact && <ClassLink classId={a.data.classId} name={a.data.className} />}
-            <h1 className={cn('font-semibold', compact ? 'text-lg' : 'mt-1 text-2xl')}>{a.data.title}</h1>
-            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-              <span className={cn(!a.data.done && due.late && 'text-destructive')}>Due {longTime(a.data.due) || 'never'}</span>
-              {a.data.points != null && <span className="text-muted-foreground">{a.data.points} points</span>}
-              {sub && <span className="text-primary">{STATUS[sub.status] ?? sub.status}</span>}
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                {!compact && <ClassLink classId={a.data.classId} name={a.data.className} />}
+                <h1 className={cn('font-semibold tracking-tight', compact ? 'text-lg' : 'mt-1 text-2xl')}>{a.data.title}</h1>
+              </div>
+              {a.data.webUrl && (
+                <a
+                  href={a.data.webUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Open in Teams"
+                  className="mt-0.5 shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+                >
+                  <ExternalLink className="size-4" />
+                </a>
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1',
+                  !a.data.done && due.late ? 'text-destructive' : !a.data.done && due.soon ? 'text-amber-400' : 'text-muted-foreground',
+                )}
+              >
+                <CalendarClock className="size-3.5" /> {longTime(a.data.due) || 'No due date'}
+              </span>
+              {a.data.points != null && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-muted-foreground">
+                  <Star className="size-3.5" /> {a.data.points}
+                </span>
+              )}
+              {sub && (
+                <span
+                  className={cn(
+                    'rounded-full px-2.5 py-1 font-medium',
+                    sub.status === 'working' ? 'bg-white/5 text-muted-foreground' : 'bg-primary/15 text-primary',
+                  )}
+                >
+                  {STATUS[sub.status] ?? sub.status}
+                </span>
+              )}
             </div>
 
             {instructions && <div className="tm-msg mt-6 leading-relaxed" dangerouslySetInnerHTML={{ __html: instructions }} />}
@@ -76,16 +111,6 @@ export function AssignmentView({ classId, id, compact }: { classId: string; id: 
               </section>
             )}
 
-            {a.data.webUrl && (
-              <a
-                href={a.data.webUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-8 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-              >
-                <ExternalLink className="size-4" /> Open in Teams
-              </a>
-            )}
           </>
         )}
     </>
@@ -97,12 +122,12 @@ function ClassLink({ classId, name }: { classId: string; name: string }) {
   const teams = useQuery(q.teams())
   const team = teams.data?.find((t) => t.id === classId)
   const main = team && (team.channels.find((c) => c.name === 'General' || c.name === 'Allgemein') ?? team.channels[0])
-  if (!main) return <p className="text-sm text-muted-foreground">{name}</p>
+  if (!main) return <p className="truncate text-xs font-medium tracking-wide text-muted-foreground uppercase">{name}</p>
   return (
     <Link
       to="/teams/$id"
       params={{ id: main.id }}
-      className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+      className="block truncate text-xs font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
     >
       {name || team.name}
     </Link>
@@ -154,7 +179,7 @@ function MyWork({ a }: { a: AssignmentDetail }) {
 
   return (
     <section
-      className={cn('mt-6 rounded-xl border border-transparent p-0.5 transition-colors', drag && 'border-primary bg-primary/5')}
+      className={cn('mt-6 rounded-xl border bg-card p-4 transition-colors', drag && 'border-primary bg-primary/5')}
       onDragOver={(e) => {
         if (!a.canEdit) return
         e.preventDefault()
@@ -167,10 +192,18 @@ function MyWork({ a }: { a: AssignmentDetail }) {
         void upload(e.dataTransfer.files)
       }}
     >
-      <h2 className="mb-2 text-sm font-semibold">My work</h2>
+      <h2 className="mb-3 text-sm font-semibold">My work</h2>
+      {a.canEdit && !sub.resources.length && !uploading.length && (
+        <button
+          onClick={() => input.current?.click()}
+          className="flex w-full flex-col items-center gap-1.5 rounded-lg border border-dashed py-6 text-sm text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+        >
+          <Paperclip className="size-5" /> Add file
+        </button>
+      )}
       <div className="flex flex-col gap-1.5">
         {sub.resources.map((r) => (
-          <div key={r.id} className="flex items-center gap-2 rounded-lg bg-card px-3 py-2 text-sm">
+          <div key={r.id} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm">
             <FileText className="size-4 shrink-0 text-muted-foreground" />
             {r.url ? (
               <a href={r.url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate hover:underline">
@@ -192,19 +225,21 @@ function MyWork({ a }: { a: AssignmentDetail }) {
           </div>
         ))}
         {uploading.map((n, i) => (
-          <div key={n + i} className="flex items-center gap-2 rounded-lg bg-card px-3 py-2 text-sm text-muted-foreground">
+          <div key={n + i} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 shrink-0 animate-spin" />
             <span className="truncate">{n}</span>
           </div>
         ))}
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
         {a.canEdit && (
           <>
             <input ref={input} type="file" multiple hidden onChange={(e) => e.target.files && void upload(e.target.files)} />
-            <Button variant="secondary" size="sm" onClick={() => input.current?.click()} disabled={busy}>
-              <Paperclip /> Add file
-            </Button>
+            {(sub.resources.length > 0 || uploading.length > 0) && (
+              <Button variant="ghost" size="sm" onClick={() => input.current?.click()} disabled={busy}>
+                <Paperclip /> Add file
+              </Button>
+            )}
             <Button
               size="sm"
               disabled={busy || uploading.length > 0 || closed || (late && !a.lateAllowed)}
@@ -227,7 +262,7 @@ function MyWork({ a }: { a: AssignmentDetail }) {
 function Files({ title, items }: { title: string; items: Resource[] }) {
   return (
     <section className="mt-6">
-      <h2 className="mb-2 text-sm font-semibold">{title}</h2>
+      <h2 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h2>
       <div className="flex flex-col gap-1.5">
         {items.map((r) => {
           const Icon = r.kind.toLowerCase().includes('link') ? Link2 : FileText
