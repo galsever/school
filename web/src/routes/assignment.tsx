@@ -52,7 +52,7 @@ export function AssignmentView({ classId, id, compact }: { classId: string; id: 
         )}
         {a.data && (
           <>
-            {!compact && <p className="text-sm text-muted-foreground">{a.data.className}</p>}
+            {!compact && <ClassLink classId={a.data.classId} name={a.data.className} />}
             <h1 className={cn('font-semibold', compact ? 'text-lg' : 'mt-1 text-2xl')}>{a.data.title}</h1>
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
               <span className={cn(!a.data.done && due.late && 'text-destructive')}>Due {longTime(a.data.due) || 'never'}</span>
@@ -89,6 +89,23 @@ export function AssignmentView({ classId, id, compact }: { classId: string; id: 
           </>
         )}
     </>
+  )
+}
+
+/** Class name as a link to the class team's main channel (team id = class id). */
+function ClassLink({ classId, name }: { classId: string; name: string }) {
+  const teams = useQuery(q.teams())
+  const team = teams.data?.find((t) => t.id === classId)
+  const main = team && (team.channels.find((c) => c.name === 'General' || c.name === 'Allgemein') ?? team.channels[0])
+  if (!main) return <p className="text-sm text-muted-foreground">{name}</p>
+  return (
+    <Link
+      to="/teams/$id"
+      params={{ id: main.id }}
+      className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+    >
+      {name || team.name}
+    </Link>
   )
 }
 
