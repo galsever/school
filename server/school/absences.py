@@ -489,6 +489,8 @@ async def set_login(server: str, school: str, user: str, password: str, place: s
         "password": password or (old or {}).get("password", ""),
         "place": place.strip(),
     }
+    if new["server"] and not new["school"]:
+        new["school"] = await untis.find_school(new["server"]) or ""
     if not all(new[k] for k in ("server", "school", "user", "password")):
         raise ValueError("Fill in all fields")
     changed = not old or any(old[k] != new[k] for k in ("server", "school", "user", "password"))
@@ -497,11 +499,22 @@ async def set_login(server: str, school: str, user: str, password: str, place: s
         if time.time() < _cooldown_until:
             raise ValueError("WebUntis just rejected a login, try again in a minute")
         try:
-            await untis.check_login(new["server"], new["school"], new["user"], new["password"])
+            try:
+                await untis.check_login(new["server"], new["school"], new["user"], new["password"])
+            except untis.UntisError as e:
+                # WebUntis wants the school's login name ("spengergasse"), people type its real name: look it up.
+                # The first try ended before any password check, so this is not a second login attempt.
+                found = await untis.find_school(new["server"]) if e.unknown_school else None
+                if not found or found == new["school"]:
+                    raise
+                new["school"] = found
+                await untis.check_login(new["server"], new["school"], new["user"], new["password"])
         except untis.UntisError as e:
             if e.bad_credentials:
                 _cooldown_until = time.time() + 60
                 raise ValueError("WebUntis rejects the user name or password") from None
+            if e.unknown_school:
+                raise ValueError("School not found on this server: use its WebUntis login name (school= in the login URL)") from None
             raise ValueError(f"WebUntis not reachable: {e}") from None
     save_login(new)
     if changed:

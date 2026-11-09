@@ -60,7 +60,7 @@ export function SettingsPage() {
 
 const UNTIS_FIELDS: { key: keyof UntisLoginInput; label: string; type?: string }[] = [
   { key: 'server', label: 'Server (name.webuntis.com)' },
-  { key: 'school', label: 'School' },
+  { key: 'school', label: 'School (login name)' },
   { key: 'user', label: 'User' },
   { key: 'password', label: 'Password', type: 'password' },
   { key: 'place', label: 'Place on the letter' },

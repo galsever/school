@@ -125,6 +125,31 @@ def test_helpers():
     assert ab.parse_server("Spengergasse.WebUntis.com") == ("spengergasse.webuntis.com", None)
 
 
+def test_login_resolves_the_school_login_name(monkeypatch):
+    import asyncio
+
+    from school import untis
+
+    tried = []
+
+    async def check_login(server, school, user, password):
+        tried.append(school)
+        if school != "spengergasse":
+            raise untis.UntisError("authenticate: school not found", 404)
+
+    async def find_school(server):
+        return "spengergasse"
+
+    monkeypatch.setattr(untis, "check_login", check_login)
+    monkeypatch.setattr(untis, "find_school", find_school)
+    asyncio.run(ab.set_login("spengergasse.webuntis.com", "HTL Spengergasse", "u", "p", "Wien"))
+    assert tried == ["HTL Spengergasse", "spengergasse"] and ab.load_login()["school"] == "spengergasse"
+    # an empty school field is looked up before the one login check
+    tried.clear()
+    asyncio.run(ab.set_login("spengergasse.webuntis.com", "", "u", "p2", "Wien"))
+    assert tried == ["spengergasse"]
+
+
 def test_letter_needs_a_reason_and_marks_days_exported():
     ab.save_snapshot(raw())
     try:

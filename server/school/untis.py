@@ -26,6 +26,11 @@ class UntisError(Exception):
         """Wrong username or password: never retry automatically."""
         return self.code == -8504
 
+    @property
+    def unknown_school(self) -> bool:
+        """The server has no school of that login name (HTTP 404, before any password check)."""
+        return self.code == 404
+
 
 def to_untis_date(iso: str) -> int:
     return int(iso.replace("-", ""))
@@ -115,6 +120,8 @@ class UntisSession:
         except httpx.HTTPError as e:
             raise UntisError(f"{method}: {type(e).__name__}") from e
         self._keep_cookies(res)
+        if res.status_code == 404:
+            raise UntisError(f"{method}: school not found", 404)
         if res.status_code != 200:
             raise UntisError(f"{method}: HTTP {res.status_code}")
         try:
@@ -172,6 +179,21 @@ class UntisSession:
             pass  # the session might already be gone
         finally:
             await self.http.aclose()
+
+
+async def find_school(server: str) -> str | None:
+    """The login name of the one school on this WebUntis host (the ?school= value), from the public school search."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            res = await http.post(
+                "https://mobile.webuntis.com/ms/schoolquery2",
+                json={"id": "1", "method": "searchSchool", "params": [{"search": server.split(".")[0]}], "jsonrpc": "2.0"},
+            )
+            schools = (res.json().get("result") or {}).get("schools") or []
+    except (httpx.HTTPError, ValueError):
+        return None
+    names = [s["loginName"] for s in schools if str(s.get("server", "")).lower() == server.lower() and s.get("loginName")]
+    return names[0] if len(names) == 1 else None
 
 
 async def check_login(server: str, school: str, user: str, password: str) -> None:
