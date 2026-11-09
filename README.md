@@ -1,8 +1,8 @@
 # School
 
-Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tailnet only, Pocket ID login): a fast Microsoft Teams client (chats, channels, meeting chats, teams, assignments), the school mail, and the WebUntis absences with own reasons per day, the Entschuldigung PDF and attendance per subject (the former excuses app). One MCP endpoint at `/api/mcp` for all of it.
+Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tailnet only, Pocket ID login): a fast Microsoft Teams client (chats, channels, meeting chats, teams, assignments), the school mail, the WebUntis absences with own reasons per day, the Entschuldigung PDF and attendance per subject (the former excuses app), and the school Moodle (courses, files, assignments with hand-in, grades). One MCP endpoint at `/api/mcp` for all of it.
 
-- Server: Python 3.12, FastAPI, httpx. Talks to Microsoft and WebUntis directly, no browser, no app registration.
+- Server: Python 3.12, FastAPI, httpx. Talks to Microsoft, WebUntis and Moodle directly, no browser, no app registration.
 - Website: React 19, TypeScript, Tailwind, shadcn/ui, TanStack Router / Query (same stack as earworm). Contract: [docs/API.md](docs/API.md).
 - Android app: planned, native Kotlin like earworm, same API.
 
@@ -15,7 +15,8 @@ Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tai
 | Assignments | all assignments by due date, instructions, material, own work: upload, turn in, undo |
 | Mail | school Outlook: inbox, sent, archive, search, read, attachments, reply, new mail. Details: [docs/MAIL.md](docs/MAIL.md) |
 | Absences | WebUntis absences with own reasons per day, the Entschuldigung PDF, attendance per subject |
-| Settings | Microsoft account, WebUntis login, notifications |
+| Moodle | courses with their files (one click opens a file), search over all courses, assignments with upload and submit, grades |
+| Settings | Microsoft account, WebUntis login, Moodle login, notifications |
 
 **Own names and hiding (Teams tab).** Right click a team or channel (long press on the phone): *Rename* gives it your own display name, *Hide* moves it into the folded *Hidden* group at the bottom of the list (*Show* brings it back).
 - The name is used everywhere: teams list, channel header, class name in assignments, notifications, MCP tools. Search finds both your name and Microsoft's. An empty name puts Microsoft's back.
@@ -32,6 +33,8 @@ Everything the app keeps is in the `data` volume (`/data`):
 | `prefs.json` | own display names and hidden flags: `{names: {id: name}, hidden: [id]}`, keys are team ids and channel ids |
 | `untis.json` | WebUntis login (0600) |
 | `absences.db` | SQLite: the raw WebUntis pull, own reasons per day, subject groups |
+| `moodle.json`, `moodle-token.json` | Moodle login (0600) and the web service token it got |
+| `moodle-uploads/` | files on their way into a Moodle submission, removed after an hour |
 | `mcp-token` | bearer token of the MCP endpoint |
 | `session-secret`, `app-password` | only used with `APP_AUTH=password` |
 
@@ -48,6 +51,23 @@ Once, in the app under `/connect`: a device code you enter on microsoft.com/devi
 ## WebUntis
 
 The login (server, school, user, password, place for the letter) is entered once under Settings and checked once at WebUntis before it is stored (`/data/untis.json`, 0600). Each sync is one login, the whole school year, and a logout; data older than 30 minutes is pulled when the Absences page or an MCP tool asks. A rejected login blocks all syncing until the login is changed: the school locks accounts, so nothing retries. The raw pull, the own reasons per day and the subject groups live in `/data/absences.db` (SQLite).
+
+## Moodle
+
+The login (user, password) is entered once under Settings and checked once at Moodle before it is stored
+(`/data/moodle.json`, 0600). The server talks to the mobile app web service (`moodle_mobile_app`) with a token it gets
+from that login; a rejected login blocks every call until the login is changed, so a typo cannot lock the account.
+
+- **Fast by design.** Every read is cached for 60 s on the server, the same read running twice is sent once, and the
+  browser keeps the last answer (localStorage), so the tab paints at once and refreshes in the background. Opening
+  the tab reads every course, so a course opens without waiting and the search covers all files. The reload button
+  empties the server cache.
+- **Two screens.** The course list (with what is due on top and a search over all courses) and one course (content or
+  grades). An assignment opens next to its course: task, material, own work with drag and drop, submit, feedback.
+- **Hand-in.** Moodle replaces the whole submission on every save, so the server copies the files already there into
+  the new draft and sends the current online text along. Assignments with a submit button stay a draft until Submit.
+- Files and embedded images are streamed through the server (`/api/moodle/file`), because they need the token; only
+  addresses on the Moodle itself are fetched, and the token is blanked in the request log.
 
 ## How it runs
 

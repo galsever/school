@@ -1,4 +1,4 @@
-"""School hub API server (Teams, mail, assignments, absences). Contract: docs/API.md."""
+"""School hub API server (Teams, mail, assignments, absences, Moodle). Contract: docs/API.md."""
 
 import asyncio
 import logging
@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-from . import absences_api, auth, config, mail, mcp, prefs, upstream
+from . import absences_api, auth, config, mail, mcp, moodle, moodle_api, prefs, upstream
 from .ms import NotConnected, session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -46,6 +46,15 @@ async def _upstream(request: Request, exc: upstream.Upstream):
     log.warning("upstream %s %s: %s", request.url.path, exc.status, exc)
     status = exc.status if exc.status in (400, 404) else 502
     return JSONResponse({"error": "upstream", "detail": str(exc)[:300]}, status_code=status)
+
+
+@app.exception_handler(moodle.MoodleError)
+async def _moodle(request: Request, exc: moodle.MoodleError):
+    if exc.not_connected:
+        return JSONResponse({"error": "moodle_not_connected", "detail": str(exc)}, status_code=409)
+    log.warning("moodle %s %s: %s", request.url.path, exc.code, exc)
+    status = {"not_found": 404, "bad_url": 400, "bad_request": 400, "locked": 400, "warning": 400}.get(exc.code, 502)
+    return JSONResponse({"error": "moodle", "detail": str(exc)[:300]}, status_code=status)
 
 
 # ---- app login (only when APP_AUTH=password) ---------------------------------
@@ -350,6 +359,12 @@ app.add_api_route("/api/mcp", mcp.handle, methods=["GET", "POST", "DELETE"], inc
 
 app.include_router(absences_api.router)
 app.include_router(absences_api.public)
+
+
+# ---- Moodle ----------------------------------------------------------------------------
+
+app.include_router(moodle_api.router)
+app.include_router(moodle_api.public)
 
 
 # ---- website -----------------------------------------------------------------

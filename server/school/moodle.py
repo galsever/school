@@ -1,0 +1,759 @@
+"""The school Moodle through the mobile app web service (`moodle_mobile_app`): login, calls, files and the API shapes.
+
+Every read goes through a short cache (CACHE_SECONDS); `drop_cache()` is the reload button. A rejected password is
+stored as blocked and never tried again until the login is changed, so a typo cannot lock the account.
+"""
+
+import asyncio
+import hashlib
+import html
+import json
+import logging
+import os
+import re
+import time
+from datetime import datetime, timezone
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
+
+import httpx
+
+from . import config
+
+SERVICE = "moodle_mobile_app"
+DEFAULT_URL = "https://moodle.spengergasse.at"
+MAX_DOWNLOAD = 60 * 1024 * 1024  # files read into memory (text for the model, files kept in a submission); the container has 512 MB
+CACHE_SECONDS = 60
+TZ = ZoneInfo("Europe/Vienna")
+
+_LOGIN = config.DATA_DIR / "moodle.json"
+_STATE = config.DATA_DIR / "moodle-token.json"
+
+
+class _NoToken(logging.Filter):
+    """File addresses carry the web service token: httpx logs every request line, so the token is blanked there."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(re.sub(r"token=[^&\s\"]+", "token=***", str(a)) if "token=" in str(a) else a for a in record.args)
+        return True
+
+
+logging.getLogger("httpx").addFilter(_NoToken())
+
+
+class MoodleError(Exception):
+    """An error Moodle answered, or our own (code not_connected, invalidlogin, bad_url, ...)."""
+
+    def __init__(self, message: str, code: str = ""):
+        super().__init__(message)
+        self.code = code
+
+    @property
+    def not_connected(self) -> bool:
+        return self.code in ("not_connected", "invalidlogin")
+
+
+# ---- login and token -----------------------------------------------------------------
+
+def load_login() -> dict | None:
+    """{url, user, password}. Without a stored login the environment counts (MOODLE_USERNAME, MOODLE_PASSWORD: development)."""
+    try:
+        c = json.loads(_LOGIN.read_text())
+    except (OSError, ValueError):
+        c = {"user": os.environ.get("MOODLE_USERNAME", ""), "password": os.environ.get("MOODLE_PASSWORD", "")}
+    c["url"] = (c.get("url") or os.environ.get("MOODLE_URL") or DEFAULT_URL).rstrip("/")
+    return c if c.get("user") and c.get("password") else None
+
+
+def login_hash(c: dict) -> str:
+    return hashlib.sha256(f"{c['url']}|{c['user']}|{c['password']}".encode()).hexdigest()
+
+
+_state: dict | None = None
+_lock = asyncio.Lock()
+_site: dict | None = None
+_http: httpx.AsyncClient | None = None
+
+
+def http() -> httpx.AsyncClient:
+    global _http
+    if _http is None:
+        _http = httpx.AsyncClient(timeout=60)
+    return _http
+
+
+def _read_state() -> dict:
+    global _state
+    if _state is None:
+        try:
+            _state = json.loads(_STATE.read_text())
+        except (OSError, ValueError):
+            _state = {}
+    return _state
+
+
+def _write_state(state: dict) -> None:
+    global _state, _site
+    _state, _site = state, None
+    _STATE.touch(mode=0o600)
+    _STATE.chmod(0o600)
+    _STATE.write_text(json.dumps(state))
+
+
+async def _fetch_token(login: dict) -> str:
+    """One login at Moodle. Raises MoodleError; code invalidlogin = wrong user or password."""
+    try:
+        r = await http().post(
+            f"{login['url']}/login/token.php",
+            data={"username": login["user"], "password": login["password"], "service": SERVICE},
+        )
+        out = r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        raise MoodleError(f"Moodle login failed: {e or type(e).__name__}", "network") from None
+    if not out.get("token"):
+        raise MoodleError(out.get("error") or out.get("message") or "Moodle login failed", out.get("errorcode") or "")
+    return out["token"]
+
+
+async def _token(rejected: str | None = None) -> str:
+    login = load_login()
+    if not login:
+        raise MoodleError("Moodle is not connected", "not_connected")
+    key = login_hash(login)
+    async with _lock:
+        state = _read_state()
+        if state.get("blocked") == key:
+            raise MoodleError("Moodle rejects the stored login", "invalidlogin")
+        if state.get("key") == key and state.get("token") and state["token"] != rejected:
+            return state["token"]
+        try:
+            token = await _fetch_token(login)
+        except MoodleError as e:
+            if e.code == "invalidlogin":
+                _write_state({"blocked": key})
+            raise
+        _write_state({"key": key, "token": token})
+        return token
+
+
+def status() -> dict:
+    login = load_login()
+    return {
+        "configured": bool(login),
+        "url": login["url"] if login else DEFAULT_URL,
+        "user": login["user"] if login else "",
+        "blocked": bool(login) and _read_state().get("blocked") == login_hash(login),
+    }
+
+
+async def set_login(url: str, user: str, password: str) -> None:
+    """Stores the login after one check at Moodle. An empty password keeps the stored one. Raises ValueError."""
+    old = load_login() or {}
+    new = {
+        "url": (url.strip() or old.get("url") or DEFAULT_URL).rstrip("/"),
+        "user": user.strip(),
+        "password": password or old.get("password", ""),
+    }
+    if not re.match(r"^https://[^/\s]+(/[^\s]*)?$", new["url"]):
+        raise ValueError("The Moodle address must start with https://")
+    if not new["user"] or not new["password"]:
+        raise ValueError("User and password are needed")
+    if _read_state().get("blocked") == login_hash(new):
+        raise ValueError("Moodle already rejected this login")
+    try:
+        token = await _fetch_token(new)
+    except MoodleError as e:
+        raise ValueError("Wrong user or password" if e.code == "invalidlogin" else str(e)) from None
+    _LOGIN.touch(mode=0o600)
+    _LOGIN.chmod(0o600)
+    _LOGIN.write_text(json.dumps(new))
+    _write_state({"key": login_hash(new), "token": token})
+    drop_cache()
+
+
+# ---- web service calls ---------------------------------------------------------------
+
+def _flatten(prefix: str, value, out: dict) -> None:
+    """Nested params the way Moodle expects them: a[0][b]=c."""
+    if isinstance(value, dict):
+        for k in sorted(value):
+            _flatten(f"{prefix}[{k}]" if prefix else str(k), value[k], out)
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            _flatten(f"{prefix}[{i}]", v, out)
+    elif isinstance(value, bool):
+        out[prefix] = "1" if value else "0"
+    elif value is not None:
+        out[prefix] = str(value)
+
+
+def _raise_if_error(body) -> None:
+    if isinstance(body, dict) and (body.get("exception") or body.get("errorcode")):
+        raise MoodleError(body.get("message") or body.get("error") or "Moodle error", body.get("errorcode") or "")
+
+
+async def _with_token(run):
+    """Runs run(token); a token Moodle no longer accepts is replaced once."""
+    token = await _token()
+    try:
+        return await run(token)
+    except MoodleError as e:
+        if e.code != "invalidtoken":
+            raise
+    return await run(await _token(rejected=token))
+
+
+async def call(fn: str, params: dict | None = None):
+    async def run(token: str):
+        form: dict = {}
+        _flatten("", params or {}, form)
+        form.update(wstoken=token, wsfunction=fn, moodlewsrestformat="json")
+        base = load_login()["url"]
+        try:
+            r = await http().post(f"{base}/webservice/rest/server.php", data=form)
+        except httpx.HTTPError as e:
+            raise MoodleError(f"Moodle does not answer: {e or type(e).__name__}", "network") from None
+        if r.status_code != 200:
+            raise MoodleError(f"{fn}: HTTP {r.status_code}", "http")
+        try:
+            body = r.json()
+        except ValueError:
+            raise MoodleError(f"{fn}: no JSON answer", "http") from None
+        _raise_if_error(body)
+        return body
+
+    return await _with_token(run)
+
+
+_cache: dict[str, tuple[float, object]] = {}
+_flying: dict[str, asyncio.Future] = {}
+
+
+async def cached(fn: str, params: dict | None = None):
+    """call() with a cache of CACHE_SECONDS; the same call running twice at once is sent once."""
+    key = fn + json.dumps(params or {}, sort_keys=True)
+    hit = _cache.get(key)
+    if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
+        return hit[1]
+    task = _flying.get(key)
+    if task is None:
+        async def run():
+            try:
+                value = await call(fn, params)
+                _cache[key] = (time.monotonic(), value)
+                return value
+            finally:
+                _flying.pop(key, None)
+
+        task = _flying[key] = asyncio.ensure_future(run())
+    return await asyncio.shield(task)
+
+
+def drop_cache() -> None:
+    _cache.clear()
+
+
+async def site() -> dict:
+    global _site
+    if _site is None:
+        _site = await call("core_webservice_get_site_info")
+    return _site
+
+
+# ---- files ---------------------------------------------------------------------------
+
+def _file_url(raw: str, token: str) -> str:
+    """Checks that raw is a file of this Moodle (the token must never leave the site) and adds the token."""
+    base = urlsplit(load_login()["url"])
+    u = urlsplit(urljoin(base.geturl() + "/", raw))
+    if (u.scheme, u.netloc) != (base.scheme, base.netloc):
+        raise MoodleError(f"Not a file on {base.netloc}", "bad_url")
+    root = base.path.rstrip("/")
+    path = u.path
+    if path.startswith(root + "/pluginfile.php/"):
+        path = root + "/webservice" + path[len(root):]
+    elif not path.startswith((root + "/webservice/pluginfile.php/", root + "/tokenpluginfile.php/")):
+        raise MoodleError("Not a Moodle file (pluginfile.php)", "bad_url")
+    query = [(k, v) for k, v in parse_qsl(u.query) if k not in ("token", "forcedownload")] + [("token", token)]
+    return urlunsplit((u.scheme, u.netloc, path, urlencode(query), ""))
+
+
+def _disposition_name(cd: str) -> str:
+    for part in cd.split(";"):
+        part = part.strip()
+        if part.startswith("filename*=UTF-8''"):
+            return unquote(part[len("filename*=UTF-8''"):])
+        if part.startswith("filename="):
+            return part[len("filename="):].strip('"')
+    return ""
+
+
+async def open_file(raw: str):
+    """(name, media type, size or None, async byte iterator) of a Moodle file."""
+
+    async def run(token: str):
+        url = _file_url(raw, token)
+        try:
+            resp = await http().send(http().build_request("GET", url, timeout=120), stream=True)
+        except httpx.HTTPError as e:
+            raise MoodleError(f"Moodle does not answer: {e or type(e).__name__}", "network") from None
+        mime = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
+        # Moodle answers file errors with a JSON exception and HTTP 200 or 404.
+        if mime == "application/json" or resp.status_code != 200:
+            data = await resp.aread()
+            await resp.aclose()
+            try:
+                _raise_if_error(json.loads(data))
+            except ValueError:
+                pass
+            if resp.status_code != 200:
+                raise MoodleError(f"File: HTTP {resp.status_code}", "not_found" if resp.status_code == 404 else "http")
+            raise MoodleError("File: unexpected answer", "http")
+        name = _disposition_name(resp.headers.get("content-disposition", "")) or unquote(Path(urlsplit(url).path).name)
+        size = resp.headers.get("content-length")
+
+        async def body():
+            try:
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+            finally:
+                await resp.aclose()
+
+        return name, mime, int(size) if size and size.isdigit() else None, body()
+
+    return await _with_token(run)
+
+
+async def download(raw: str) -> tuple[str, str, bytes]:
+    """(name, media type, bytes), at most MAX_DOWNLOAD."""
+    name, mime, _, body = await open_file(raw)
+    data = bytearray()
+    async for chunk in body:
+        data += chunk
+        if len(data) > MAX_DOWNLOAD:
+            await body.aclose()
+            raise MoodleError(f"File is larger than {MAX_DOWNLOAD >> 20} MB", "too_big")
+    return name, mime, bytes(data)
+
+
+async def upload(item_id: int, name: str, content) -> int:
+    """Puts a file (bytes or an open binary file) into a draft area and returns its item id; item id 0 makes a new area."""
+
+    async def run(token: str):
+        if hasattr(content, "seek"):
+            content.seek(0)
+        try:
+            r = await http().post(
+                f"{load_login()['url']}/webservice/upload.php",
+                data={"token": token, "filearea": "draft", "itemid": str(item_id)},
+                files={"file_1": (name, content, "application/octet-stream")},
+                timeout=300,
+            )
+            body = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            raise MoodleError(f"Upload failed: {e or type(e).__name__}", "network") from None
+        _raise_if_error(body)
+        if not isinstance(body, list) or not body or "itemid" not in body[0]:
+            raise MoodleError("Upload: unexpected answer", "http")
+        return int(body[0]["itemid"])
+
+    return await _with_token(run)
+
+
+# ---- text helpers --------------------------------------------------------------------
+
+def plain(s: str | None) -> str:
+    """Moodle names carry HTML entities (&amp;)."""
+    return html.unescape(s or "").strip()
+
+
+def iso(unix: int | None) -> str | None:
+    return datetime.fromtimestamp(unix, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if unix and unix > 0 else None
+
+
+_BLOCKS = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "table", "ul", "ol"}
+_SKIP = {"script", "style", "head"}
+
+
+class _Text(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out: list[str] = []
+        self.skip = 0
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag in _SKIP:
+            self.skip += 1
+        elif tag == "br":
+            self.out.append("\n")
+        elif tag == "li":
+            self.out.append("\n- ")
+        elif tag in _BLOCKS or tag == "tr":
+            self.out.append("\n")
+        elif tag in ("td", "th"):
+            self.out.append(" | ")
+        elif tag == "a":
+            self.links.append(a.get("href") or "")
+        elif tag == "img" and a.get("alt"):
+            self.out.append(f"[image: {a['alt']}]")
+
+    def handle_endtag(self, tag):
+        if tag in _SKIP:
+            self.skip = max(0, self.skip - 1)
+        elif tag in _BLOCKS:
+            self.out.append("\n")
+        elif tag == "a" and self.links:
+            href = self.links.pop()
+            if href and not href.startswith("#") and href not in "".join(self.out[-3:]):
+                self.out.append(f" ({href})")
+
+    def handle_data(self, data):
+        if self.skip or not data.strip():
+            if not self.skip and data and self.out and not self.out[-1].endswith((" ", "\n")):
+                self.out.append(" ")
+            return
+        lead = " " if data[0].isspace() and self.out and not self.out[-1].endswith((" ", "\n")) else ""
+        self.out.append(lead + " ".join(data.split()) + (" " if data[-1].isspace() else ""))
+
+
+def html_text(s: str | None) -> str:
+    """Moodle HTML (intros, summaries, feedback) as readable plain text."""
+    s = s or ""
+    if "<" not in s and "&" not in s:
+        return s.strip()
+    p = _Text()
+    p.feed(s)
+    p.close()
+    lines = [line.strip() for line in "".join(p.out).split("\n")]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def view_url(file_url: str) -> str:
+    """The hub address that streams a Moodle file to the browser."""
+    return "/api/moodle/file?url=" + quote(file_url, safe="")
+
+
+_EMBED = re.compile(r'\b(src|href)=(["\'])(https?://[^"\']+?/(?:webservice/)?pluginfile\.php/[^"\']*)\2', re.I)
+
+
+def local_html(s: str | None) -> str:
+    """Moodle HTML for the website: embedded files and images point at the hub (they need the token)."""
+    return _EMBED.sub(lambda m: f'{m.group(1)}="{view_url(html.unescape(m.group(3)))}"', s or "")
+
+
+async def page_html(file_url: str) -> str:
+    """The HTML of a page activity (its index.html), for the website."""
+    _, _, data = await download(file_url)
+    return local_html(data.decode("utf-8", "replace"))
+
+
+# ---- shapes for the website and the MCP tools ----------------------------------------
+
+def _file(c: dict) -> dict:
+    path = (c.get("filepath") or "").strip("/")
+    return {
+        "name": f"{path}/{c.get('filename', '')}" if path else c.get("filename", ""),
+        "url": c.get("fileurl", ""),
+        "view": view_url(c.get("fileurl", "")),
+        "mime": c.get("mimetype") or "",
+        "size": c.get("filesize") or 0,
+        "modified": iso(c.get("timemodified")),
+    }
+
+
+async def _courses_raw() -> list[dict]:
+    return await cached("core_enrol_get_users_courses", {"userid": (await site())["userid"]})
+
+
+async def courses(include_past: bool = False) -> list[dict]:
+    """Enrolled courses, last used first; ended ones only with include_past."""
+    now = time.time()
+    out = []
+    for c in await _courses_raw():
+        ended = bool(c.get("enddate")) and c["enddate"] < now
+        if ended and not include_past:
+            continue
+        out.append(
+            {
+                "id": c["id"],
+                "name": plain(c.get("fullname")),
+                "short": plain(c.get("shortname")),
+                "progress": None if c.get("progress") is None else round(c["progress"]),
+                "lastAccess": iso(c.get("lastaccess")),
+                "ended": ended,
+                "favourite": bool(c.get("isfavourite")),
+            }
+        )
+    out.sort(key=lambda c: c["lastAccess"] or "", reverse=True)
+    return out
+
+
+async def deadlines(days: int = 14, overdue_days: int = 60) -> list[dict]:
+    """Open to-dos of the dashboard timeline. Submitted work no longer shows up here."""
+    hour = int(time.time()) // 3600 * 3600  # whole hours, so the cache key stays the same for a while
+    out = await cached(
+        "core_calendar_get_action_events_by_timesort",
+        {
+            "timesortfrom": hour - overdue_days * 86400,
+            "timesortto": hour + 3600 + min(max(days, 1), 180) * 86400,
+            "limitnum": 50,
+            "limittononsuspendedevents": True,
+        },
+    )
+    rows = []
+    for e in out.get("events") or []:
+        course = e.get("course") or {}
+        action = e.get("action") or {}
+        # Moodle 5 puts the cmid, not the activity id, into instance; the view url is the reliable source.
+        cmid = dict(parse_qsl(urlsplit(e.get("url") or "").query)).get("id", "")
+        rows.append(
+            {
+                "cmid": int(cmid) if cmid.isdigit() else None,
+                "name": plain(e.get("activityname") or e.get("name")),
+                "course": plain(course.get("fullname")),
+                "courseId": course.get("id"),
+                "type": e.get("modulename") or "",
+                "due": iso(e.get("timesort")),
+                "overdue": bool(e.get("overdue")),
+                "action": action.get("name") if action.get("actionable") else None,
+                "url": e.get("url") or "",
+            }
+        )
+    return rows
+
+
+async def course_grades() -> dict[int, str]:
+    out = await cached("gradereport_overview_get_course_grades")
+    return {g["courseid"]: g.get("grade") or "" for g in out.get("grades") or []}
+
+
+async def home() -> dict:
+    """The Moodle tab: what is due and the courses with their grade."""
+    cs, grades, due = await asyncio.gather(courses(), course_grades(), deadlines(30, 30))
+    for c in cs:
+        grade = grades.get(c["id"], "").strip()
+        c["grade"] = grade if grade not in ("", "-") else None
+    return {"due": due, "courses": cs}
+
+
+def _module(m: dict) -> dict | None:
+    visible = m.get("uservisible", True)
+    if not visible and not m.get("availabilityinfo"):
+        return None
+    out = {
+        "cmid": m["id"],
+        "name": plain(m.get("name")),
+        "type": m.get("modname") or "",
+        "instance": m.get("instance"),
+        "url": m.get("url") or "",
+        "description": local_html(m.get("description")),
+        "files": [],
+        "link": None,
+        "done": (m.get("completiondata") or {}).get("state", 0) > 0,
+        "restricted": None if visible else (html_text(m.get("availabilityinfo")) or "Not available"),
+        # id says which date it is (duedate, allowsubmissionsfromdate, timeopen, timeclose, ...); the label is localized
+        "dates": [{"id": d.get("dataid") or "", "label": plain(d.get("label")).rstrip(":"), "time": iso(d.get("timestamp"))} for d in m.get("dates") or []],
+    }
+    for c in m.get("contents") or []:
+        if c.get("type") == "url":
+            out["link"] = c.get("fileurl")
+        elif c.get("type") == "file" and not c.get("isexternalfile"):
+            out["files"].append(_file(c))
+    return out
+
+
+async def course(course_id: int) -> dict:
+    """Sections and activities of one course with their files."""
+    sections, cs = await asyncio.gather(cached("core_course_get_contents", {"courseid": course_id}), _courses_raw())
+    name = next((plain(c.get("fullname")) for c in cs if c["id"] == course_id), "")
+    out = []
+    for s in sections:
+        modules = [m for m in map(_module, s.get("modules") or []) if m]
+        summary = local_html(s.get("summary"))
+        if not modules and not html_text(summary):
+            continue
+        out.append({"id": s["id"], "number": s.get("section", 0), "name": plain(s.get("name")), "summary": summary, "modules": modules})
+    return {"id": course_id, "name": name, "sections": out}
+
+
+async def grade_items(course_id: int) -> list[dict]:
+    out = await cached("gradereport_user_get_grade_items", {"courseid": course_id, "userid": (await site())["userid"]})
+    rows = []
+    for it in ((out.get("usergrades") or [{}])[0]).get("gradeitems") or []:
+        if it.get("gradeishidden"):
+            continue
+        kind = it.get("itemtype") or ""
+        name = plain(it.get("itemname")) or {"course": "Course total", "category": "Category total"}.get(kind, "(unnamed)")
+        weight = it.get("weightformatted") or ""
+        rows.append(
+            {
+                "name": name,
+                "type": it.get("itemmodule") or kind,
+                "total": kind in ("course", "category"),
+                "cmid": it.get("cmid") or None,
+                "grade": plain(it.get("gradeformatted")) or "-",
+                "range": plain(it.get("rangeformatted")),
+                "percentage": plain(it.get("percentageformatted")),
+                "weight": "" if weight == "-" else weight,
+                "feedback": html_text(it.get("feedback")),
+                "gradedAt": iso(it.get("gradedategraded")),
+            }
+        )
+    return rows
+
+
+# ---- assignments ---------------------------------------------------------------------
+
+def _config(a: dict, plugin: str, name: str) -> str:
+    for c in a.get("configs") or []:
+        if c.get("subtype") == "assignsubmission" and c.get("plugin") == plugin and c.get("name") == name:
+            return c.get("value") or ""
+    return ""
+
+
+async def find_assignment(ref: int, course_id: int = 0, by: str = "id") -> dict:
+    """The raw assignment for an assignment id or a cmid (by says which one is tried first)."""
+    params = {"courseids": [course_id]} if course_id else {}
+    out = await cached("mod_assign_get_assignments", params)
+    found = [dict(a, coursename=plain(c.get("fullname"))) for c in out.get("courses") or [] for a in c.get("assignments") or []]
+    for key in (("id", "cmid") if by == "id" else ("cmid", "id")):
+        for a in found:
+            if a.get(key) == ref:
+                return a
+    raise MoodleError("Assignment not found in your courses", "not_found")
+
+
+def _plugins(status: dict) -> tuple[str, int, list[dict]]:
+    """Status, time and plugins of the user's or the team's submission."""
+    last = status.get("lastattempt") or {}
+    sub = last.get("teamsubmission") or last.get("submission") or {}
+    return sub.get("status") or "", sub.get("timemodified") or 0, sub.get("plugins") or []
+
+
+def _plugin_files(plugins: list[dict], kind: str) -> list[dict]:
+    return [f for p in plugins if p.get("type") == kind for area in p.get("fileareas") or [] for f in area.get("files") or []]
+
+
+def _plugin_text(plugins: list[dict], kind: str) -> str:
+    for p in plugins:
+        if p.get("type") == kind:
+            for f in p.get("editorfields") or []:
+                if f.get("text"):
+                    return f["text"]
+    return ""
+
+
+async def describe_assignment(a: dict) -> dict:
+    status = await cached("mod_assign_get_submission_status", {"assignid": a["id"]})
+    max_bytes = _config(a, "file", "maxsubmissionsizebytes")
+    max_files = _config(a, "file", "maxfilesubmissions")
+    out = {
+        "id": a["id"],
+        "cmid": a["cmid"],
+        "courseId": a.get("course"),
+        "course": a.get("coursename", ""),
+        "name": plain(a.get("name")),
+        "url": f"{load_login()['url']}/mod/assign/view.php?id={a['cmid']}",
+        "opens": iso(a.get("allowsubmissionsfromdate")),
+        "due": iso(a.get("duedate")),
+        "cutoff": iso(a.get("cutoffdate")),
+        "extensionDue": None,
+        "description": local_html(a.get("intro")),
+        "attachments": [_file(f) for f in a.get("introattachments") or []],
+        "files": _config(a, "file", "enabled") == "1",
+        "maxFiles": int(max_files) if max_files.isdigit() else None,
+        "maxBytes": int(max_bytes) if max_bytes.isdigit() and int(max_bytes) > 0 else None,
+        "fileTypes": _config(a, "file", "filetypeslist"),
+        "onlineText": _config(a, "onlinetext", "enabled") == "1",
+        "submitButton": a.get("submissiondrafts") == 1,
+        "team": a.get("teamsubmission") == 1,
+        "submission": None,
+        "feedback": None,
+    }
+    last = status.get("lastattempt")
+    if last:
+        state, modified, plugins = _plugins(status)
+        out["submission"] = {
+            "status": state if state not in ("", "new") else "none",
+            "grading": last.get("gradingstatus") or "",
+            "modified": iso(modified),
+            "canEdit": bool(last.get("canedit")),
+            "needsSubmit": a.get("submissiondrafts") == 1 and state == "draft",
+            "locked": bool(last.get("locked")),
+            "files": [_file(f) for f in _plugin_files(plugins, "file")],
+            "text": _plugin_text(plugins, "onlinetext"),
+        }
+        out["extensionDue"] = iso(last.get("extensionduedate"))
+    fb = status.get("feedback")
+    if fb:
+        comments = [f.get("text") for p in fb.get("plugins") or [] for f in p.get("editorfields") or [] if html_text(f.get("text"))]
+        files = [_file(f) for p in fb.get("plugins") or [] for area in p.get("fileareas") or [] for f in area.get("files") or []]
+        grade = html_text(fb.get("gradefordisplay"))
+        if grade or comments or files:
+            out["feedback"] = {"grade": grade, "gradedAt": iso(fb.get("gradeddate")), "comments": local_html("<br>".join(comments)), "files": files}
+    return out
+
+
+def _warnings(step: str, warnings) -> None:
+    if warnings:
+        text = "; ".join(f"{w.get('message', '')} ({w['warningcode']})" if w.get("warningcode") else w.get("message", "") for w in warnings)
+        raise MoodleError(f"{step}: {text}", "warning")
+
+
+async def save_submission(
+    a: dict,
+    add: list[tuple[str, object]] = (),
+    remove: set[str] | None = None,
+    replace_files: bool = False,
+    text: str | None = None,
+) -> None:
+    """Changes the own submission: adds files (name, bytes or open file), removes files by name, sets the online text.
+
+    mod_assign_save_submission replaces the data of every enabled plugin, so what stays is sent again: the files
+    already there are copied into a fresh draft area and the current online text goes along.
+    """
+    files_on = _config(a, "file", "enabled") == "1"
+    text_on = _config(a, "onlinetext", "enabled") == "1"
+    if add and not files_on:
+        raise MoodleError("This assignment does not take files", "bad_request")
+    if text is not None and not text_on:
+        raise MoodleError("This assignment does not take online text", "bad_request")
+    status = await call("mod_assign_get_submission_status", {"assignid": a["id"]})
+    last = status.get("lastattempt")
+    if not last or not last.get("canedit"):
+        raise MoodleError("This submission cannot be changed (closed, locked or already submitted)", "locked")
+    _, _, plugins = _plugins(status)
+    plugin: dict = {}
+    if files_on:
+        draft = (await call("core_files_get_unused_draft_itemid"))["itemid"]
+        gone = {name for name, _ in add} | (remove or set())
+        if not replace_files:
+            for f in _plugin_files(plugins, "file"):
+                if f.get("filename") in gone:
+                    continue
+                _, _, data = await download(f["fileurl"])
+                await upload(draft, f["filename"], data)
+        for name, content in add:
+            await upload(draft, name, content)
+        plugin["files_filemanager"] = draft
+    if text_on:
+        plugin["onlinetext_editor"] = {"text": _plugin_text(plugins, "onlinetext") if text is None else text, "format": 1, "itemid": 0}
+    try:
+        _warnings("Save", await call("mod_assign_save_submission", {"assignmentid": a["id"], "plugindata": plugin}))
+    finally:
+        drop_cache()
+
+
+async def submit_for_grading(a: dict) -> None:
+    try:
+        _warnings(
+            "Submit",
+            await call("mod_assign_submit_for_grading", {"assignmentid": a["id"], "acceptsubmissionstatement": True}),
+        )
+    finally:
+        drop_cache()

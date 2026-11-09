@@ -1,6 +1,7 @@
-"""MCP server (streamable HTTP, stateless JSON-RPC) at /api/mcp: the school Teams account and the WebUntis absences as tools for Claude.
+"""MCP server (streamable HTTP, stateless JSON-RPC) at /api/mcp: the school Teams account, the WebUntis absences and Moodle as tools for Claude.
 
-Read everything, send messages and mail. No turn-in or uploads (his decision 2026-11-09). Own bearer token
+Teams: read everything, send messages and mail, no turn-in or uploads (his decision 2026-11-09). Moodle: all tools of the
+former moodle-mcp including submit (his decision 2026-11-09). Own bearer token
 (DATA_DIR/mcp-token): the route skips the Pocket ID gate (personal-infra apps/school-hub/mcp-route.yaml), tailnet only.
 """
 
@@ -13,7 +14,7 @@ from urllib.parse import unquote
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from . import absences_api, config, mail, upstream
+from . import absences_api, config, mail, moodle, moodle_api, upstream
 
 TOKEN = config._secret_file("mcp-token", lambda: __import__("secrets").token_urlsafe(36))
 PROTOCOL = "2025-06-18"
@@ -306,7 +307,9 @@ TOOLS = {
     ),
 }
 TOOLS.update(absences_api.TOOLS)
-READ_ONLY = {n for n in TOOLS if n not in ("send_message", "send_mail", "reply_mail") and n not in absences_api.WRITES}
+TOOLS.update(moodle_api.TOOLS)
+WRITES = {"send_message", "send_mail", "reply_mail"} | absences_api.WRITES | moodle_api.WRITES
+READ_ONLY = {n for n in TOOLS if n not in WRITES}
 
 
 def _tool_list():
@@ -327,11 +330,12 @@ async def _call(name: str, args: dict) -> dict:
     fn, _, props, _ = TOOLS[name]
     args = {("from_" if k == "from" else k): v for k, v in (args or {}).items() if k in props}
     try:
-        text = await fn(**args)
-        return {"content": [{"type": "text", "text": text}]}
+        out = await fn(**args)
+        # a tool answers text, or content blocks itself (moodle_read_file: an image)
+        return {"content": out if isinstance(out, list) else [{"type": "text", "text": out}]}
     except upstream.Upstream as e:
         return {"content": [{"type": "text", "text": f"Microsoft error {e.status}: {e}"}], "isError": True}
-    except absences_api.Fail as e:
+    except (absences_api.Fail, moodle.MoodleError) as e:
         return {"content": [{"type": "text", "text": str(e)}], "isError": True}
     except (ValueError, TypeError) as e:
         return {"content": [{"type": "text", "text": f"Bad arguments: {e}"}], "isError": True}
@@ -351,7 +355,9 @@ async def handle(request: Request):
         return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status_code=400)
     # Public origin of this request, for the signed PDF link of excuse_pdf.
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    absences_api.ORIGIN.set(f"{request.headers.get('x-forwarded-proto') or request.url.scheme}://{host}")
+    origin = f"{request.headers.get('x-forwarded-proto') or request.url.scheme}://{host}"
+    absences_api.ORIGIN.set(origin)
+    moodle_api.ORIGIN.set(origin)
     batch = isinstance(msg, list)
     replies = [r for r in [await _one(m) for m in (msg if batch else [msg])] if r]
     if not replies:
@@ -372,13 +378,15 @@ async def _one(m: dict) -> dict | None:
             {
                 "protocolVersion": params.get("protocolVersion") or PROTOCOL,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "school", "version": "0.2.0"},
+                "serverInfo": {"name": "school", "version": "0.3.0"},
                 "instructions": "The user's school hub (HTL Spengergasse). Microsoft account: Teams chats, class teams, channel files, "
                 "assignments and Outlook mail. Reading is free; send_message, send_mail and reply_mail act as the user on the real "
                 "school account, so only send what the user asked for. WebUntis absences: absence days with the user's own reason "
                 "per day, attendance per subject and the Entschuldigung PDF they sign and send to the teacher. Dates are "
                 "YYYY-MM-DD (Europe/Vienna). A day needs a reason before it can go into a PDF. Lateness (only_late) never counts "
-                "against attendance.",
+                "against attendance. Moodle (moodle.spengergasse.at, tools moodle_*): start with moodle_deadlines for what is due, "
+                "moodle_courses for course ids, moodle_course_contents to find files, moodle_read_file to read them; "
+                "moodle_submit_assignment changes the real submission, only on the user's word.",
             }
         )
     if method == "ping":

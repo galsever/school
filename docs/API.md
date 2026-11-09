@@ -96,6 +96,28 @@ syncing until the login is changed: schools lock accounts, so nothing retries. T
 | `GET/POST /api/absences/login` | WebUntis login `{server, school, user, password, place}`; the password is never returned, empty keeps it |
 | `GET /api/mcp/pdf?dates=&exp=&sig=` | signed 15 min link from the MCP tool `excuse_pdf`, no login |
 
+## Moodle
+
+The school Moodle (moodle.spengergasse.at) through its mobile app web service. Own login (`/data/moodle.json`), checked
+once at Moodle before it is stored; a rejected login blocks every call until the login is changed. Every read is cached
+for 60 s on the server; `POST /api/moodle/refresh` empties that cache (the reload button). Times are ISO UTC.
+Errors: 409 `moodle_not_connected` (no login, or Moodle rejects it), 400 / 404 / 502 `moodle` with Moodle's message.
+
+| Route | What |
+|---|---|
+| `GET /api/moodle` | `{due, courses}`: open to-dos of the timeline (`cmid, name, course, courseId, type, due, overdue, url`) and the courses (`id, name, short, grade, progress, lastAccess`), last used first |
+| `POST /api/moodle/refresh` | empties the cache, 204 |
+| `GET /api/moodle/courses/{id}` | `{id, name, sections}`; a section has `modules[]` with `cmid, name, type, url, description (HTML), files[], link, done, restricted, dates[]` |
+| `GET /api/moodle/courses/{id}/grades` | grade items: `name, type, total, cmid, grade, range, percentage, weight, feedback, gradedAt` |
+| `GET /api/moodle/assignments/{cmid}?course=` | the assignment: `description (HTML), attachments, due, cutoff, files, maxFiles, maxBytes, onlineText, submitButton, submission {status, canEdit, needsSubmit, files, text}, feedback` |
+| `POST /api/moodle/uploads?name=` | raw file body (max 100 MB) -> `{id, size}`; waits an hour at most for a submission |
+| `POST /api/moodle/assignments/{cmid}/submission?course=` | `{add: [upload ids], remove: [file names], text}` -> the assignment afterwards. Files already there are kept |
+| `POST /api/moodle/assignments/{cmid}/submit?course=` | submits a draft for grading (assignments with a submit button) -> the assignment afterwards |
+| `GET /api/moodle/file?url=&download=` | a Moodle file (`view` of a file): PDF, images, text, media inline, the rest as download. Only addresses on the Moodle itself |
+| `GET /api/moodle/page?url=` | `{html}` of a page activity (untrusted: sanitize) |
+| `GET/POST /api/moodle/login` | `{configured, url, user, blocked}` / `{user, password, url?}`; the password is never returned, empty keeps it |
+| `PUT /api/mcp/moodle-upload/{id}?exp=&sig=`, `GET /api/mcp/moodle-file?url=&exp=&sig=` | signed 15 min links from the MCP tools `moodle_upload_link` and `moodle_read_file`, no login |
+
 ## MCP
 
 `POST /api/mcp`: MCP over streamable HTTP (stateless JSON-RPC), bearer token from `DATA_DIR/mcp-token`. Not behind the Pocket ID gate (personal-infra `apps/school-hub/mcp-route.yaml`), tailnet only.
@@ -107,7 +129,14 @@ syncing until the login is changed: schools lock accounts, so nothing retries. T
 | Assignments | `list_assignments`, `get_assignment` |
 | Mail | `list_mail`, `read_mail`, `send_mail`, `reply_mail` |
 | Absences | `absence_days`, `new_open_days`, `set_reason`, `attendance`, `excuse_pdf`, `refresh` |
+| Moodle | `moodle_deadlines`, `moodle_courses`, `moodle_course_contents`, `moodle_assignment`, `moodle_grades`, `moodle_read_file`, `moodle_upload_link`, `moodle_submit_assignment` |
 
 The only tools that write to Microsoft are `send_message`, `send_mail` and `reply_mail`; `set_reason` writes the own reason of a day. No turn-in or uploads by design.
+
+Moodle tools are the former `moodle-mcp` (Go, stdio) with the same shapes. `moodle_submit_assignment` changes the real
+submission. A local file gets to the hub in two steps, because the server cannot read the model's disk:
+`moodle_upload_link` returns an `upload_id` and a signed link, `curl -T <file> '<url>'` sends the file, then
+`moodle_submit_assignment` takes the `upload_id`. `moodle_read_file` answers text (PDF, Word, PowerPoint, OpenDocument,
+HTML, code), images as images, and a signed `download_url` for everything else.
 
 `list_teams` and `list_chats` use the own display names; hidden teams and channels are still listed, marked `(hidden)`.

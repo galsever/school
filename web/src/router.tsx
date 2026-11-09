@@ -123,6 +123,31 @@ const absencesRoute = createRoute({
   component: lazyRouteComponent(() => import('@/routes/absences'), 'AbsencesPage'),
 })
 
+const moodleRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: '/moodle',
+  component: lazyRouteComponent(() => import('@/routes/moodle'), 'MoodleLayout'),
+})
+
+const moodleIndexRoute = createRoute({
+  getParentRoute: () => moodleRoute,
+  path: '/',
+  component: lazyRouteComponent(() => import('@/routes/moodle'), 'NoCourse'),
+})
+
+const moodleCourseRoute = createRoute({
+  getParentRoute: () => moodleRoute,
+  path: '$courseId',
+  // a: the open assignment (cmid)
+  validateSearch: (s: Record<string, unknown>): { a?: number; tab?: 'grades' } => {
+    const out: { a?: number; tab?: 'grades' } = {}
+    if (Number.isInteger(Number(s.a)) && Number(s.a) > 0) out.a = Number(s.a)
+    if (s.tab === 'grades') out.tab = 'grades'
+    return out
+  },
+  component: lazyRouteComponent(() => import('@/routes/moodle'), 'CoursePage'),
+})
+
 const settingsRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: '/settings',
@@ -140,6 +165,7 @@ const routeTree = rootRoute.addChildren([
     assignmentsRoute,
     assignmentRoute,
     absencesRoute,
+    moodleRoute.addChildren([moodleIndexRoute, moodleCourseRoute]),
     settingsRoute,
   ]),
 ])
