@@ -36,3 +36,19 @@ Types: `web/src/lib/types.ts`.
 
 `POST /api/mcp`: MCP over streamable HTTP (stateless JSON-RPC), bearer token from `DATA_DIR/mcp-token`. Not behind the Pocket ID gate (personal-infra `apps/teams/mcp-route.yaml`), tailnet only.
 Tools: `list_chats`, `read_messages`, `send_message`, `list_mail`, `read_mail`, `send_mail`, `reply_mail` (the send/reply ones are the only write tools), `list_teams`, `list_files`, `read_file` (PDF/Office text), `list_assignments`, `get_assignment`. No turn-in or uploads by design.
+
+## Absences (WebUntis)
+
+Own login for WebUntis (`/data/untis.json`), checked once at WebUntis before it is stored. A rejected login blocks all
+syncing until the login is changed: schools lock accounts, so nothing retries. Times are minutes since midnight.
+
+| Route | What |
+|---|---|
+| `GET /api/absences` | `{sync, name, klasse, days}`; a day has `date, status (excused, partial, open), reason, exportedAt, absences[]` |
+| `POST /api/absences/sync?force=` | pulls WebUntis when the data is older than 30 min (force: now, at most once a minute); returns `sync` |
+| `PUT /api/absences/{date}/reason` | `{reason}`: the own reason of a day (goes into the letter) |
+| `POST /api/absences/letter` | `{dates}` -> the Entschuldigung PDF; every day needs a reason; marks the days exported |
+| `GET /api/absences/attendance?range=s1,s2,year` or `from=&to=` | `{range, total, subjects, groups, allSubjects}`, per subject `held, present, excused, unexcused, percent` |
+| `POST /api/absences/groups`, `DELETE /api/absences/groups/{name}` | subjects counted as one (`{name, subjects}`) |
+| `GET/POST /api/absences/login` | WebUntis login `{server, school, user, password, place}`; the password is never returned, empty keeps it |
+| `GET /api/mcp/pdf?dates=&exp=&sig=` | signed 15 min link from the MCP tool `excuse_pdf`, no login |

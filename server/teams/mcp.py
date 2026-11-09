@@ -1,4 +1,4 @@
-"""MCP server (streamable HTTP, stateless JSON-RPC) at /api/mcp: the school Teams account as tools for Claude.
+"""MCP server (streamable HTTP, stateless JSON-RPC) at /api/mcp: the school Teams account and the WebUntis absences as tools for Claude.
 
 Read everything, send messages and mail. No turn-in or uploads (his decision 2026-11-09). Own bearer token
 (DATA_DIR/mcp-token): the route skips the Pocket ID gate (personal-infra apps/teams/mcp-route.yaml), tailnet only.
@@ -13,7 +13,7 @@ from urllib.parse import unquote
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from . import config, mail, upstream
+from . import absences_api, config, mail, upstream
 
 TOKEN = config._secret_file("mcp-token", lambda: __import__("secrets").token_urlsafe(36))
 PROTOCOL = "2025-06-18"
@@ -305,7 +305,8 @@ TOOLS = {
         ["mail_id", "text"],
     ),
 }
-READ_ONLY = {n for n in TOOLS if n not in ("send_message", "send_mail", "reply_mail")}
+TOOLS.update(absences_api.TOOLS)
+READ_ONLY = {n for n in TOOLS if n not in ("send_message", "send_mail", "reply_mail") and n not in absences_api.WRITES}
 
 
 def _tool_list():
@@ -324,12 +325,14 @@ async def _call(name: str, args: dict) -> dict:
     if name not in TOOLS:
         raise KeyError(name)
     fn, _, props, _ = TOOLS[name]
-    args = {k: v for k, v in (args or {}).items() if k in props}
+    args = {("from_" if k == "from" else k): v for k, v in (args or {}).items() if k in props}
     try:
         text = await fn(**args)
         return {"content": [{"type": "text", "text": text}]}
     except upstream.Upstream as e:
         return {"content": [{"type": "text", "text": f"Microsoft error {e.status}: {e}"}], "isError": True}
+    except absences_api.Fail as e:
+        return {"content": [{"type": "text", "text": str(e)}], "isError": True}
     except (ValueError, TypeError) as e:
         return {"content": [{"type": "text", "text": f"Bad arguments: {e}"}], "isError": True}
 
@@ -346,6 +349,9 @@ async def handle(request: Request):
         msg = await request.json()
     except ValueError:
         return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status_code=400)
+    # Public origin of this request, for the signed PDF link of excuse_pdf.
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    absences_api.ORIGIN.set(f"{request.headers.get('x-forwarded-proto') or request.url.scheme}://{host}")
     batch = isinstance(msg, list)
     replies = [r for r in [await _one(m) for m in (msg if batch else [msg])] if r]
     if not replies:
@@ -366,10 +372,13 @@ async def _one(m: dict) -> dict | None:
             {
                 "protocolVersion": params.get("protocolVersion") or PROTOCOL,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "teams", "version": "0.1.0"},
-                "instructions": "The user's school Microsoft account (HTL Spengergasse): Teams chats, class teams, channel files, assignments, "
-                "and Outlook mail. Reading is free; send_message, send_mail and reply_mail act as the user on the real school "
-                "account, so only send what the user asked for.",
+                "serverInfo": {"name": "school", "version": "0.2.0"},
+                "instructions": "The user's school hub (HTL Spengergasse). Microsoft account: Teams chats, class teams, channel files, "
+                "assignments and Outlook mail. Reading is free; send_message, send_mail and reply_mail act as the user on the real "
+                "school account, so only send what the user asked for. WebUntis absences: absence days with the user's own reason "
+                "per day, attendance per subject and the Entschuldigung PDF they sign and send to the teacher. Dates are "
+                "YYYY-MM-DD (Europe/Vienna). A day needs a reason before it can go into a PDF. Lateness (only_late) never counts "
+                "against attendance.",
             }
         )
     if method == "ping":

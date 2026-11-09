@@ -104,6 +104,25 @@ const assignmentRoute = createRoute({
   component: lazyRouteComponent(() => import('@/routes/assignment'), 'AssignmentPage'),
 })
 
+const absencesSearch = (s: Record<string, unknown>) => {
+  const out: { tab?: 'attendance'; range?: 's1' | 's2' | 'year'; from?: string; to?: string } = {}
+  const day = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined)
+  if (s.tab === 'attendance') out.tab = 'attendance'
+  if (s.range === 's1' || s.range === 's2' || s.range === 'year') out.range = s.range
+  if (day(s.from) && day(s.to)) {
+    out.from = day(s.from)
+    out.to = day(s.to)
+  }
+  return out
+}
+
+const absencesRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: '/absences',
+  validateSearch: absencesSearch,
+  component: lazyRouteComponent(() => import('@/routes/absences'), 'AbsencesPage'),
+})
+
 const settingsRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: '/settings',
@@ -120,6 +139,7 @@ const routeTree = rootRoute.addChildren([
     mailRoute.addChildren([mailIndexRoute, mailItemRoute]),
     assignmentsRoute,
     assignmentRoute,
+    absencesRoute,
     settingsRoute,
   ]),
 ])

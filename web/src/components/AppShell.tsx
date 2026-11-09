@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ClipboardList, Mail, MessageSquare, Settings, Users } from 'lucide-react'
+import { CalendarX, ClipboardList, Mail, MessageSquare, Settings, Users } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { q } from '@/lib/query'
 import type { Chat } from '@/lib/types'
@@ -12,6 +12,7 @@ const nav = [
   { to: '/teams', label: 'Teams', icon: Users },
   { to: '/assignments', label: 'Assignments', icon: ClipboardList },
   { to: '/mail', label: 'Mail', icon: Mail },
+  { to: '/absences', label: 'Absences', icon: CalendarX },
   { to: '/settings', label: 'Settings', icon: Settings },
 ] as const
 
@@ -54,11 +55,11 @@ export function AppShell() {
     <div className="flex h-full flex-col md:flex-row">
       <nav className="hidden w-16 shrink-0 flex-col items-center gap-2 border-r border-sidebar-border bg-sidebar py-3 md:flex">
         <img src="/favicon.svg" alt="" className="mb-3 size-8" />
-        {nav.slice(0, 4).map((item) => (
+        {nav.slice(0, -1).map((item) => (
           <RailLink key={item.to} item={item} badge={badge(item.to)} />
         ))}
         <div className="flex-1" />
-        <RailLink item={nav[4]} badge={0} />
+        <RailLink item={nav[nav.length - 1]} badge={0} />
       </nav>
       <main className="min-h-0 min-w-0 flex-1">
         <Outlet />

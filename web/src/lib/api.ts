@@ -17,7 +17,7 @@ export function setAuthHandler(h: AuthHandler) {
   authHandler = h
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
     res = await fetch(path, { credentials: 'same-origin', ...init })
@@ -44,7 +44,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T
 }
 
-function post<T = void>(path: string, body?: unknown): Promise<T> {
+export function post<T = void>(path: string, body?: unknown): Promise<T> {
   return request<T>(path, {
     method: 'POST',
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
