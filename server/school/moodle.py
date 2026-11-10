@@ -291,6 +291,13 @@ def _disposition_name(cd: str) -> str:
     return ""
 
 
+def _plain_size(resp: httpx.Response) -> str | None:
+    """Content-Length of the body as we pass it on: httpx unpacks gzip, so a compressed length would be wrong."""
+    if resp.headers.get("content-encoding", "identity").strip().lower() != "identity":
+        return None
+    return resp.headers.get("content-length")
+
+
 async def open_file(raw: str):
     """(name, media type, size or None, async byte iterator) of a Moodle file."""
 
@@ -313,7 +320,7 @@ async def open_file(raw: str):
                 raise MoodleError(f"File: HTTP {resp.status_code}", "not_found" if resp.status_code == 404 else "http")
             raise MoodleError("File: unexpected answer", "http")
         name = _disposition_name(resp.headers.get("content-disposition", "")) or unquote(Path(urlsplit(url).path).name)
-        size = resp.headers.get("content-length")
+        size = _plain_size(resp)
 
         async def body():
             try:
@@ -833,7 +840,7 @@ async def publication_file(cmid: int, file_id: int):
         await r.aclose()
         raise MoodleError("File not available", "not_found")
     name = _disposition_name(r.headers.get("content-disposition", "")) or "file"
-    size = r.headers.get("content-length")
+    size = _plain_size(r)
 
     async def body():
         try:
