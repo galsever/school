@@ -66,7 +66,7 @@ Moodle file addresses (`pluginfile.php`) only work with the key, so the browser 
 
 ## Hand-in (assignments)
 
-`mod_assign_save_submission` replaces the data of **every** enabled submission plugin. So `save_submission` sends the whole state each time: a fresh draft area, the files already there downloaded and uploaded again (minus the removed ones and the ones with a new file of the same name), the new files, and the current online text. The browser first uploads each file to `/api/moodle/uploads` (it waits an hour at most), then sends the upload ids. `submit_for_grading` accepts the submission statement.
+`mod_assign_save_submission` replaces the data of **every** enabled submission plugin. So `save_submission` sends the whole state each time: a fresh draft area, the files already there downloaded and uploaded again (minus the removed ones and the ones with a new file of the same name), the new files, and the current online text. Moodle refuses to save an empty submission (`couldnotsavesubmission`), so when nothing would be left (no files, no text) it calls `mod_assign_remove_submission` instead. The browser first uploads each file to `/api/moodle/uploads` (it waits an hour at most), then sends the upload ids. `submit_for_grading` accepts the submission statement.
 
 ## Choices
 

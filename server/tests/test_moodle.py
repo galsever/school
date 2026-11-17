@@ -430,3 +430,12 @@ def test_uploads_and_signed_links(fake):
     for what, e, s in ((f"upload|other", exp, sig), (f"upload|{uid}", exp + 1, sig), (f"upload|{uid}", 1, api._sign(f"upload|{uid}", 1))):
         with pytest.raises(HTTPException):
             api._check(what, e, s)
+
+
+def test_removing_the_last_file_removes_the_submission(fake):
+    fake.answers["mod_assign_get_submission_status"] = _status(files=("old.pdf",), text="")
+    fake.answers["mod_assign_remove_submission"] = {"status": True, "warnings": []}
+    run(md.save_submission(ASSIGN, remove={"old.pdf"}))
+    fn, form = fake.calls[-1]
+    assert fn == "mod_assign_remove_submission" and form["userid"] == "7" and form["assignid"] == str(ASSIGN["id"])
+    assert not fake.uploads and "mod_assign_save_submission" not in [c[0] for c in fake.calls]

@@ -1014,7 +1014,11 @@ async def describe_assignment(a: dict) -> dict:
 
 def _warnings(step: str, warnings) -> None:
     if warnings:
-        text = "; ".join(f"{w.get('message', '')} ({w['warningcode']})" if w.get("warningcode") else w.get("message", "") for w in warnings)
+        text = "; ".join(
+            " ".join(x for x in (w.get("message", ""), str(w.get("item") or "")) if x)
+            + (f" ({w['warningcode']})" if w.get("warningcode") else "")
+            for w in warnings
+        )
         raise MoodleError(f"{step}: {text}", "warning")
 
 
@@ -1041,21 +1045,28 @@ async def save_submission(
     if not last or not last.get("canedit"):
         raise MoodleError("This submission cannot be changed (closed, locked or already submitted)", "locked")
     _, _, plugins = _plugins(status)
+    gone = {name for name, _ in add} | (remove or set())
+    kept = [] if replace_files or not files_on else [f for f in _plugin_files(plugins, "file") if f.get("filename") not in gone]
+    new_text = (_plugin_text(plugins, "onlinetext") if text is None else text) if text_on else ""
+    if not kept and not add and not re.sub(r"<[^>]*>|&nbsp;|\s", "", new_text or ""):
+        # Moodle refuses to save an empty submission (couldnotsavesubmission), so removing the last file removes it
+        try:
+            out = await call("mod_assign_remove_submission", {"userid": (await site())["userid"], "assignid": a["id"]})
+            _warnings("Remove", out.get("warnings") if isinstance(out, dict) else None)
+        finally:
+            drop_cache()
+        return
     plugin: dict = {}
     if files_on:
         draft = (await call("core_files_get_unused_draft_itemid"))["itemid"]
-        gone = {name for name, _ in add} | (remove or set())
-        if not replace_files:
-            for f in _plugin_files(plugins, "file"):
-                if f.get("filename") in gone:
-                    continue
-                _, _, data = await download(f["fileurl"])
-                await upload(draft, f["filename"], data)
+        for f in kept:
+            _, _, data = await download(f["fileurl"])
+            await upload(draft, f["filename"], data)
         for name, content in add:
             await upload(draft, name, content)
         plugin["files_filemanager"] = draft
     if text_on:
-        plugin["onlinetext_editor"] = {"text": _plugin_text(plugins, "onlinetext") if text is None else text, "format": 1, "itemid": 0}
+        plugin["onlinetext_editor"] = {"text": new_text, "format": 1, "itemid": 0}
     try:
         _warnings("Save", await call("mod_assign_save_submission", {"assignmentid": a["id"], "plugindata": plugin}))
     finally:
