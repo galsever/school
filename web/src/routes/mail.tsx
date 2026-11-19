@@ -302,6 +302,10 @@ function Bubble({ mail, own, images, onImages }: { mail: Mail; own: boolean; ima
   const [details, setDetails] = useState(false)
   const [light, setLight] = useState(false)
   const body = useMemo(() => mailHtml(mail.html, { images, collapse: !FORWARD.test(mail.subject), styled: true }), [mail.html, mail.subject, images])
+  // Image attachments the text does not show (an iPhone forward drops the <img> tags): shown below it, logos and icons left out
+  const shown = mail.files.filter(
+    (f) => f.type.startsWith('image/') && !f.type.includes('svg') && (f.size ?? 0) >= 20_000 && !mail.html.includes(f.url),
+  )
   const names = (l: MailAddress[]) => l.map((r) => (details && r.address && r.address !== r.name ? `${r.name} <${r.address}>` : r.name)).join(', ')
 
   return (
@@ -347,6 +351,15 @@ function Bubble({ mail, own, images, onImages }: { mail: Mail; own: boolean; ima
           >
             <Ellipsis className="size-4" />
           </button>
+        )}
+        {shown.length > 0 && (
+          <div className="mt-3 flex flex-col items-start gap-2">
+            {shown.map((f) => (
+              <a key={f.id} href={f.url} target="_blank" rel="noopener noreferrer">
+                <img src={f.url} alt={f.name} loading="lazy" className="max-h-[32rem] max-w-full rounded-lg" />
+              </a>
+            ))}
+          </div>
         )}
         {mail.files.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
