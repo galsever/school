@@ -93,6 +93,17 @@ The books are his own licences, for his own use: book pages and text never go in
 
 For a dev copy against the real account: `D4S_EMAIL` / `D4S_PASSWORD` in the environment (only when no login file exists), uvicorn as in the README.
 
+Reader smoke test without the real account: uvicorn on `127.0.0.1:8797` with `DATA_DIR` pointing at a scratch copy of a book folder, `MB_LOCAL=1 npm run build` in `web/`, then headless Chromium (Playwright, browsers in `~/.cache/ms-playwright`): Ctrl+wheel over a page must keep the page under the pointer, copy must give running text.
+
+Checking placement on a real book: fetch its `content.xml` into a scratch folder, run `fit_offset` / `place_page` from `books.py` against the stored page SVGs and count runs whose glyph row and first glyph match; delete the scratch copy afterwards (book text never stays on disk outside `/data/books`).
+
+## Known limits
+
+- About 6 to 16 % of runs stay off their glyph row: formulas, single letters, labels inside figures (glyph counts there do not match the letters).
+- Search marks inside a page estimate word positions by letter widths (`spanOf` in `lib/books.ts`): in long lines a mark can sit a little beside its word.
+- The browser keeps a page's text runs for good (`staleTime: Infinity`): after a book is placed again, one reload.
+- A book without `content.xml` would have no text (none of his so far): see Fallbacks.
+
 ## Fallbacks (not built)
 
 For a book without `content.xml`: the offline zip the app downloads (`dl.digi4school.at/download/<id>` after the LTI hops), or a glyph map learned once per book by OCR voting (prototype measured 99.8 % right glyphs on the demo books). Neither was needed for his books.
