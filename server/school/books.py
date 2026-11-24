@@ -418,10 +418,15 @@ def glyph_points(svg: str) -> list[tuple[float, float]]:
     return out
 
 
+MAX_OFFSET = 150  # media box vs crop box: bleed and crop marks, never half a page
+
+
 def fit_offset(pages: list[tuple[list[tuple[float, float]], list]]) -> tuple[float, float] | None:
     """content.xml (PDF media box) and the page SVG (crop box) share the scale, not the origin. Over several pages, rows
     of glyphs whose count equals a text run's letter count vote for (run left - row x, run bottom - row baseline).
-    x is clear; y is a few px off at worst (run bottoms include descenders). None when the votes do not agree."""
+    Votes are counted as pairs in a small window (x +-1, y +-4: run bottoms include descenders) and only within
+    MAX_OFFSET: rows that merely have the same letter count as some other run (running heads, page numbers) scatter.
+    None when the votes do not agree."""
     votes = collections.Counter()
     for points, runs in pages:
         rows = collections.defaultdict(list)
@@ -434,29 +439,66 @@ def fit_offset(pages: list[tuple[list[tuple[float, float]], list]]) -> tuple[flo
             n = len(re.sub(r"\s", "", text))
             if n >= 6:
                 for x, y in by_count.get(n, []):
-                    votes[(round(l - x), round(t + h - y))] += 1
-    xs = collections.Counter()
-    for (x, _), k in votes.items():
-        xs[x] += k
-    if not xs:
+                    dx, dy = round(l - x), round(t + h - y)
+                    if abs(dx) <= MAX_OFFSET and abs(dy) <= MAX_OFFSET:
+                        votes[(dx, dy)] += 1
+    if not votes:
         return None
-    ox, k = xs.most_common(1)[0]
-    if k < 8 or k < 0.25 * sum(xs.values()):
+    total = sum(votes.values())
+
+    def score(x: int, y: int) -> int:
+        return sum(votes.get((x + i, y + j), 0) for i in (-1, 0, 1) for j in range(-4, 5))
+
+    best = max(votes, key=lambda v: (score(*v), votes[v]))
+    k = score(*best)
+    if k < 8 or k < 0.12 * total:
         return None
-    ys = collections.Counter()
-    for (x, y), k in votes.items():
-        if abs(x - ox) <= 1:
-            for d in (-1, 0, 1):  # smooth: neighbours count half
-                ys[y + d] += k if d else 2 * k
-    return float(ox), float(ys.most_common(1)[0][0])
+    # x: the strongest column near the best window; y: the votes of that column within +-12 (two clusters are usual:
+    # fonts with and without descenders); snap_runs puts each run on its own glyph row afterwards
+    col = collections.Counter()
+    for (x, y), c in votes.items():
+        if abs(x - best[0]) <= 1 and abs(y - best[1]) <= 12:
+            col[x] += c
+    ox = col.most_common(1)[0][0]
+    near = {v: c for v, c in votes.items() if v[0] == ox and abs(v[1] - best[1]) <= 12}
+    oy = sum(v[1] * c for v, c in near.items()) / sum(near.values())
+    return float(ox), float(round(oy))
+
+
+BASELINE = 0.8  # the reader draws a run's text at top + 0.8 * height
+
+
+def snap_runs(points: list[tuple[float, float]], runs: list) -> list:
+    """Puts each run (already moved by the book's offset) on the glyph row it belongs to: the nearest row with a glyph
+    where the run starts. Runs without such a row stay where they are."""
+    rows = collections.defaultdict(list)
+    for x, y in points:
+        rows[round(y, 1)].append(x)
+    out = []
+    for x, top, w, h, t in runs:
+        base = top + BASELINE * h
+        best = None
+        for y, xs in rows.items():
+            d = abs(y - base)
+            if d <= max(6.0, 0.6 * h) and (best is None or d < best[0]) and any(abs(gx - x) <= 3 for gx in xs):
+                best = (d, y)
+        out.append([x, round(best[1] - BASELINE * h, 1), w, h, t] if best else [x, top, w, h, t])
+    return out
 
 
 def page_text(runs: list) -> str:
-    """Runs in file order (pdftohtml writes reading order); runs on the same line joined with a space."""
-    lines, last = [], None
+    """Runs in file order (pdftohtml writes reading order). Runs on one line join with a space unless they touch (CO 2
+    -> CO2); a word broken at the line end with a hyphen joins the next line ("Halb-" + "wertszeit"); soft hyphens go."""
+    lines: list[str] = []
+    last = None
     for x, y, w, h, t in runs:
+        t = t.replace("\xad", "")
         if last is not None and abs(y - last[0]) < max(2.0, h * 0.5) and x >= last[1] - 2:
-            lines[-1] += ("" if lines[-1].endswith((" ", "-")) or t.startswith(" ") else " ") + t
+            touching = x - last[1] < max(1.0, 0.12 * h)
+            sep = "" if touching or lines[-1].endswith(" ") or t.startswith(" ") else " "
+            lines[-1] += sep + t
+        elif lines and re.search(r"\w-$", lines[-1].rstrip()) and re.match(r"\s*[a-zäöüß]", t):
+            lines[-1] = lines[-1].rstrip()[:-1] + t.lstrip()
         else:
             lines.append(t)
         last = (y, x + w)
@@ -504,17 +546,26 @@ def texts(book_id: int, first: int, last: int) -> list[tuple[int, str, str]]:
     return db().execute("SELECT n, label, text FROM page WHERE book=? AND n BETWEEN ? AND ? ORDER BY n", (book_id, first, last)).fetchall()
 
 
+MARK_ON, MARK_OFF = "\x02", "\x03"  # snippet marks (brackets occur in book text)
+
+
 def fts_query(q: str) -> str:
-    words = re.findall(r"\w+", q)
-    return " ".join(f'"{w}"*' for w in words[:12])
+    """Every word a prefix; ß and ss find each other (Strasse, Straße). AND OR NOT are words, not operators."""
+    parts = []
+    for w in re.findall(r"\w+", q)[:12]:
+        variants = {w, w.replace("ß", "ss"), w.replace("ss", "ß")}
+        alt = " OR ".join(f'"{v}"*' for v in sorted(variants))
+        parts.append(f"({alt})" if len(variants) > 1 else alt)
+    return " AND ".join(parts)
 
 
 def search(q: str, book_id: int | None = None, limit: int = 50) -> list[dict]:
+    """Hits with snippet marked by MARK_ON/MARK_OFF."""
     query = fts_query(q)
     if not query:
         return []
     sql = (
-        "SELECT f.book, f.n, p.label, snippet(page_fts, 0, '[', ']', '…', 14) FROM page_fts f "
+        f"SELECT f.book, f.n, p.label, snippet(page_fts, 0, '{MARK_ON}', '{MARK_OFF}', '…', 14) FROM page_fts f "
         "JOIN page p ON p.book = f.book AND p.n = f.n WHERE page_fts MATCH ?"
     )
     args: list = [query]
@@ -536,11 +587,14 @@ _jobs: dict[int, asyncio.Task] = {}
 _progress: dict[int, list[int]] = {}  # book -> [pages done, pages]
 
 
-def ensure(book: dict) -> None:
+PLACE = 2  # text placement version: books placed by an older one are downloaded again (pages on disk are kept)
+
+
+def ensure(book: dict, force: bool = False) -> None:
     """Starts the download of a book unless it is there or running. book: a shelf entry."""
     bid = book["id"]
     m = meta(bid)
-    if m and m.get("state") == "ready":
+    if m and m.get("state") == "ready" and m.get("place") == PLACE and not force:
         return
     if bid in _jobs and not _jobs[bid].done():
         return
@@ -770,11 +824,16 @@ async def _download(book: dict) -> None:
                 cp = next(iter(content.values()), None)
                 ox = (cp["w"] - default[0]) / 2 if cp and default[0] else 0.0
                 oy = (cp["h"] - default[1]) / 2 if cp and default[1] else 0.0
+            log.info("book %s volume %r: text offset %s", bid, part, (ox, oy) if off else f"centred ({ox}, {oy})")
             for i in range(1, count + 1):
                 cp = content.get(i)
                 placed = [[round(x - ox, 1), round(y - oy, 1), w, h, t] for x, y, w, h, t in (cp["runs"] if cp else [])]
-                text_pages.append((start + i - 1, pages[start + i - 2]["label"], placed))
+                n = start + i - 1
+                if n in raws:
+                    placed = snap_runs(glyph_points(raws[n]), placed)
+                text_pages.append((n, pages[n - 1]["label"], placed))
             start += count
+        snapped = set(raws)
         raws.clear()
         has_text = any(r for _, _, r in text_pages)
         await asyncio.to_thread(store_text, bid, text_pages)
@@ -785,7 +844,20 @@ async def _download(book: dict) -> None:
         rest = [n for n in range(1, len(pages) + 1) if n not in set(first_pages)]
         await asyncio.gather(*(fetch(n, False) for n in rest))
         missing = [n for n in range(1, len(pages) + 1) if not page_file(bid, n).is_file()]
-        m.update(pages=[{"label": p["label"], "w": p["w"] or default[0], "h": p["h"] or default[1]} for p in pages], state="ready" if not missing else "error")
+
+        # 3. every run onto its glyph row, from the pages on disk
+        def snap_all() -> None:
+            out = []
+            for n, label, placed in text_pages:
+                f = page_file(bid, n)
+                if n not in snapped and placed and f.is_file():
+                    placed = snap_runs(glyph_points(f.read_text()), placed)
+                out.append((n, label, placed))
+            store_text(bid, out)
+
+        if has_text:
+            await asyncio.to_thread(snap_all)
+        m.update(pages=[{"label": p["label"], "w": p["w"] or default[0], "h": p["h"] or default[1]} for p in pages], state="ready" if not missing else "error", place=PLACE)
         if missing:
             m["error"] = f"{len(missing)} pages missing"
         _write_json(folder / "meta.json", m)

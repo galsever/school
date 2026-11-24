@@ -50,21 +50,21 @@ Opening a book from the hub may end a viewer session of the same book in a brows
 
 ## Text on the page
 
-`content.xml` uses the PDF media box, the SVG the crop box: same scale, different origin (about 34 px left, 35 px up in the demo books). The offset per volume is voted from the first pages: rows of glyphs (`<use>` with a translate) whose letter count matches a text run vote for (run left - row x, run bottom - row baseline). x comes out exact; y is a few px off at most (run bottoms include descenders). Without agreement the media box is centred on the page. Stored runs are already in SVG coordinates.
+`content.xml` uses the PDF media box, the SVG the crop box: same scale, different origin (about 34 px left, 35 px up in the demo books). The offset per volume is voted from the first pages: rows of glyphs (`<use>` with a translate) whose letter count matches a text run vote for (run left - row x, run bottom - row baseline). x comes out exact; y is a few px off at most (run bottoms include descenders). Without agreement the media box is centred on the page. Then every run is snapped to its own glyph row (nearest row with a glyph at the run's left edge), so a page whose layout differs from the first pages still lines up. Stored runs are already in SVG coordinates. `PLACE` in `books.py` is the placement version: a book placed by an older one is downloaded again on its next open (pages already on disk are kept); the browser keeps old text runs until a reload.
 
 The reader draws the runs as transparent SVG `<text>` with `textLength` over the page image (CSS `.book-text` in `index.css`).
 
 ## Search
 
-SQLite FTS5 in `/data/books/books.db` (`page` table: runs and plain text per page; `page_fts`: the index, tokenizer `unicode61 remove_diacritics 2`, so `große` finds `Größe`; `ß` stays). Every word of a search is a prefix. A page's plain text is its runs in file order (pdftohtml writes reading order), runs on one line joined with a space.
+SQLite FTS5 in `/data/books/books.db` (`page` table: runs and plain text per page; `page_fts`: the index, tokenizer `unicode61 remove_diacritics 2`, so `große` finds `Größe`; `ß` stays). Every word of a search is a prefix, all words must occur, `ß` and `ss` find each other, `and` / `or` / `not` are plain words. Snippets mark hits with `\x02` ... `\x03` (brackets occur in book text); the MCP shows them as `[...]`. A page's plain text is its runs in file order (pdftohtml writes reading order): runs on one line joined with a space unless they touch, soft hyphens dropped, a word split by a hyphen at the line end joined again.
 
 ## MCP tools
 
 | Tool | What |
 |---|---|
 | `books_list` | without `book_id` the shelf (id, title, downloaded); with `book_id` its contents with printed pages (downloads the text first, waits up to 2 min) |
-| `books_search` | `query`, optional `book_id`, `limit`: hits with book, printed page, snippet; lists books never opened (not searchable yet) |
-| `books_read` | `book_id` and `pages` (printed: `12`, `12-15`, up to 60 pages) or `chapter` (`1.2` or part of a title, to the next chapter of the same level); paged with `offset` / `next_offset` |
+| `books_search` | `query`, optional `book_id`, `limit` (1 to 100, `more` when there are more hits): hits with book, printed page, snippet; lists books never opened (not searchable yet) |
+| `books_read` | `book_id` and `pages` (printed: `12`, `12-15`, up to 60 pages, `capped` names the page to go on from) or `chapter` (`1.2` or part of a title, to the next chapter of the same level); paged with `offset` / `next_offset` |
 
 Text only: figures, tables drawn as graphics and layout are not in it.
 

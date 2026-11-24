@@ -50,6 +50,8 @@ export const pageUrl = (id: number, n: number) => `/api/books/${id}/pages/${n}.s
 export const coverUrl = (id: number) => `/api/books/${id}/cover.jpg`
 
 const loading = (s?: BookState) => s === 'loading' || s === 'text'
+/** The reader asks again until the book is ready or failed (a fresh open answers none first). */
+const unsettled = (s?: BookState) => s !== undefined && s !== 'ready' && s !== 'error'
 
 export const booksQ = {
   shelf: () =>
@@ -65,7 +67,7 @@ export const booksQ = {
       queryKey: ['book', id],
       queryFn: () => booksApi.open(id),
       staleTime: 30_000,
-      refetchInterval: (q) => (loading(q.state.data?.state) ? 2000 : false),
+      refetchInterval: (q) => (unsettled(q.state.data?.state) ? 2000 : false),
     }),
   search: (q: string, book?: number) =>
     queryOptions({ queryKey: ['book-search', q, book ?? 0], queryFn: () => booksApi.search(q, book), staleTime: 60_000, enabled: q.trim().length >= 2 }),
@@ -80,7 +82,8 @@ export const searchWords = (q: string) =>
     .split(/[^\p{L}\p{N}]+/u)
     .filter((w) => w.length >= 2)
 
-const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+/** Lowercase without accents, ß as ss (like the server's search). */
+export const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/ß/g, 'ss')
 
 /** Where search words start in a run: [start, length] in characters (accents ignored, like the server). Each hit runs
  * to the end of the word it starts, so "kost" marks all of "Kostenrechnung". */
@@ -120,7 +123,10 @@ export function spanOf(text: string, at: number, len: number, width: number): [n
   return total ? [(width * before) / total, (width * inside) / total] : [0, 0]
 }
 
-/** The snippet's [marked] words as React-friendly parts. */
+/** The snippet's marked words (between \x02 and \x03, brackets occur in book text) as React-friendly parts. */
 export function snippetParts(s: string): { text: string; mark: boolean }[] {
-  return s.split(/(\[[^\]]*\])/).filter(Boolean).map((p) => (p.startsWith('[') && p.endsWith(']') ? { text: p.slice(1, -1), mark: true } : { text: p, mark: false }))
+  return s
+    .split(/(\x02[^\x03]*\x03)/)
+    .filter(Boolean)
+    .map((p) => (p.startsWith('\x02') ? { text: p.slice(1, -1), mark: true } : { text: p, mark: false }))
 }

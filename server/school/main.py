@@ -6,6 +6,7 @@ import time
 from urllib.parse import urlencode
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from . import absences_api, auth, books, books_api, config, mail, mcp, moodle, moodle_api, prefs, upstream
@@ -34,6 +35,13 @@ async def _canonical_host(request: Request, call_next):
 async def _http_error(request: Request, exc: HTTPException):
     detail = exc.detail if isinstance(exc.detail, dict) else {"error": "error", "detail": str(exc.detail)}
     return JSONResponse(detail, status_code=exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid(request: Request, exc: RequestValidationError):
+    first = (exc.errors() or [{}])[0]
+    where = ".".join(str(x) for x in first.get("loc", ())[1:])
+    return JSONResponse({"error": "bad_request", "detail": f"{where}: {first.get('msg', 'invalid')}"}, status_code=400)
 
 
 @app.exception_handler(NotConnected)

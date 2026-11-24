@@ -1,5 +1,6 @@
 """Books (digi4school): website routes under /api/books and the MCP tools books_list, books_search, books_read."""
 
+import asyncio
 import json
 import re
 
@@ -28,6 +29,14 @@ async def _book(book_id: int) -> dict:
         if b["id"] == book_id:
             return b
     raise HTTPException(404, {"error": "not_found", "detail": "No such book on the shelf"})
+
+
+def _known(book_id: int, n: int) -> None:
+    m = bk.meta(book_id)
+    if not m:
+        raise HTTPException(404, {"error": "not_found", "detail": "Book not downloaded"})
+    if not 1 <= n <= len(m.get("pages") or []):
+        raise HTTPException(404, {"error": "not_found", "detail": "No such page"})
 
 
 def _shape(m: dict, state: dict) -> dict:
@@ -62,7 +71,7 @@ async def set_login(payload: dict = Body(...)):
 
 @router.get("/search")
 async def search(q: str, book: int = 0):
-    hits = bk.search(q, book or None, limit=200 if book else 60)
+    hits = bk.search(q, book or None, limit=200)
     titles = {b["id"]: b["title"] for b in await bk.shelf()} if not book else {}
     return [{**h, "title": titles.get(h["book"], "")} for h in hits]
 
@@ -72,6 +81,7 @@ async def open_book(book_id: int):
     """Starts the download unless the book is there; answers the book as far as it is known."""
     b = await _book(book_id)
     bk.ensure(b)
+    await asyncio.sleep(0)  # let a new download write its first meta before answering
     m = bk.meta(book_id) or {"id": book_id, "title": b["title"], "publisher": b["publisher"]}
     return _shape(m, bk.local_state(book_id))
 
@@ -92,6 +102,7 @@ async def remove(book_id: int):
 
 @router.get("/{book_id}/pages/{n}.svg")
 async def page(book_id: int, n: int):
+    _known(book_id, n)
     f = bk.page_file(book_id, n)
     if not f.is_file():
         raise HTTPException(404, {"error": "not_found", "detail": "Page not downloaded yet"})
@@ -101,6 +112,7 @@ async def page(book_id: int, n: int):
 @router.get("/{book_id}/text/{n}")
 async def text(book_id: int, n: int):
     """Text runs of a page in SVG coordinates: [x, top, width, height, text]."""
+    _known(book_id, n)
     return bk.runs(book_id, n)
 
 
@@ -113,6 +125,10 @@ async def cover(book_id: int):
 
 
 # ---- MCP tools -------------------------------------------------------------------------------
+
+def _marks(s: str) -> str:
+    return s.replace(bk.MARK_ON, "[").replace(bk.MARK_OFF, "]")
+
 
 def _json(value) -> str:
     return json.dumps(value, ensure_ascii=False, indent=1)
@@ -151,11 +167,15 @@ async def list_tool(book_id: int = 0) -> str:
 async def search_tool(query: str, book_id: int = 0, limit: int = 20) -> str:
     if book_id:
         await bk.wait_text(await _find(book_id))
+    if not query.strip():
+        raise bk.BooksError("Give a query", "bad_request")
     limit = max(1, min(int(limit or 20), 100))
-    hits = bk.search(query, book_id or None, limit=limit)
+    hits = bk.search(query, book_id or None, limit=limit + 1)
     shelf = await bk.shelf()
     titles = {b["id"]: b["title"] for b in shelf}
-    out = {"hits": [{"book_id": h["book"], "book": titles.get(h["book"], ""), "page": h["label"], "text": h["snippet"]} for h in hits]}
+    out = {"hits": [{"book_id": h["book"], "book": titles.get(h["book"], ""), "page": h["label"], "text": _marks(h["snippet"])} for h in hits[:limit]]}
+    if len(hits) > limit:
+        out["more"] = f"more than {limit} hits: narrow the query, give book_id or raise limit (up to 100)"
     if not book_id:
         missing = [b["title"] for b in shelf if not b["text"]]
         if missing:
@@ -183,6 +203,7 @@ async def read_tool(book_id: int, pages: str = "", chapter: str = "", offset: in
     labels = [p["label"] for p in m["pages"]]
     if not m.get("text"):
         raise bk.BooksError("This book has no text layer", "no_text")
+    chapter, pages, offset = chapter.strip(), pages.strip(), max(0, int(offset or 0))
     if chapter:
         toc = m.get("toc") or []
         hit = next((i for i, t in enumerate(toc) if t["title"].lower().startswith(chapter.lower())), None)
@@ -194,18 +215,23 @@ async def read_tool(book_id: int, pages: str = "", chapter: str = "", offset: in
         nxt = next((t["page"] for t in toc[hit + 1 :] if _level(t["title"]) <= lvl and t["page"] > first), len(labels) + 1)
         last = max(first, nxt - 1)
     elif pages:
-        a, _, b = pages.partition("-")
+        a, sep, b = pages.partition("-")
+        if not a.strip():
+            raise bk.BooksError("pages is a printed page or a range like 12-15", "bad_request")
         first = _index(labels, a)
         last = _index(labels, b) if b.strip() else first
         if last < first:
             first, last = last, first
     else:
         raise bk.BooksError("Give pages (printed, like 12 or 12-15) or chapter", "bad_request")
-    last = min(last, first + 60)
+    capped = last > first + 59
+    last = min(last, first + 59)
     body = "\n\n".join(f"--- page {label} ---\n{text}" for n, label, text in bk.texts(book_id, first, last))
-    max_chars = max(1000, min(int(max_chars or 30000), 100000))
+    max_chars = max(200, min(int(max_chars or 30000), 100000))
     chunk = body[offset : offset + max_chars]
     out = {"book": m.get("title", ""), "pages": f"{labels[first - 1]}-{labels[last - 1]}", "text": chunk}
+    if capped:
+        out["capped"] = f"only 60 pages per call: read on from page {labels[last]}"
     if offset + max_chars < len(body):
         out["next_offset"] = offset + max_chars
     return _json(out)

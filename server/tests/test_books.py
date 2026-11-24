@@ -173,10 +173,10 @@ def test_download_pages_text_toc(fake):
 
 def test_search_prefix_and_umlauts(fake):
     run(_download())
-    hits = bk.search("grossen")
-    assert hits == [] or hits[0]["page"] == 2
+    assert bk.search("grossen")[0]["page"] == 2  # ss finds ß
     hits = bk.search("Größen")
-    assert hits and hits[0]["label"] == "1" and "[Größenvergleich]" in hits[0]["snippet"]
+    assert hits and hits[0]["label"] == "1" and "\x02Größenvergleich\x03" in hits[0]["snippet"]
+    assert bk.search("and") == []  # a word, not an operator
     assert bk.search("deckung", 14478)[0]["label"] == "2"
     assert bk.search("") == []
 
@@ -202,12 +202,38 @@ def test_mcp_tools(fake):
     assert hits["hits"][0]["page"] == "2" and "English" in hits["not_searched"]
     with pytest.raises(bk.BooksError):
         run(api.read_tool(14478, pages="99"))
+    assert "[Kosten" in hits["hits"][0]["text"] and "\x02" not in hits["hits"][0]["text"]
+    one = json.loads(run(api.search_tool("Kosten", limit=1)))
+    assert len(one["hits"]) == 1 and ("more" in one) == (len(hits["hits"]) > 1)
+    for bad in (dict(pages="-2"), dict(chapter="  ")):
+        with pytest.raises(bk.BooksError):
+            run(api.read_tool(14478, **bad))
+    out = json.loads(run(api.read_tool(14478, pages="1", offset=-5, max_chars=1)))
+    assert out["text"].startswith("--- page 1") and "capped" not in out
 
 
 def test_fit_offset_pools_pages():
     page = ([(10 + 5 * i, 21.0) for i in range(8)] + [(10 + 5 * i, 41.0) for i in range(9)], [[15, 18, 40, 10, "Achtzehn"], [15, 38, 40, 10, "Neunzehnt"]])
     assert bk.fit_offset([page] * 5) == (5.0, 7.0)
     assert bk.fit_offset([page]) is None  # two votes are not enough
+
+
+def test_page_text_joins_words():
+    runs = [[0, 10, 40, 10, "Die Halb-"], [0, 30, 40, 10, "wertszeit von CO"], [40.5, 33, 4, 7, "2"], [0, 50, 30, 10, "Arbeit\xadnehmer"]]
+    assert bk.page_text(runs) == "Die Halbwertszeit von CO2\nArbeitnehmer"
+    assert bk.page_text([[0, 10, 20, 10, "Nord-"], [0, 30, 20, 10, "Süd"]]) == "Nord-\nSüd"
+
+
+def test_snap_runs_to_glyph_rows():
+    points = [(10 + 5 * i, 50.0) for i in range(5)]
+    snapped = bk.snap_runs(points, [[10.5, 39, 30, 10, "Hallo"], [300, 39, 30, 10, "fern"]])
+    assert snapped[0][1] == 42.0  # baseline 50 = top + 0.8 * 10
+    assert snapped[1][1] == 39  # no glyph where it starts: unchanged
+
+
+def test_fts_query():
+    assert bk.fts_query("Straße CO2") == '("Strasse"* OR "Straße"*) AND "CO2"*'
+    assert bk.fts_query("***") == ""
 
 
 def test_parsers():

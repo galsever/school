@@ -144,9 +144,9 @@ Errors: 409 `books_not_connected`, 404 / 400 / 502 `books`.
 | `GET /api/books/{id}` | the same without starting anything; 404 when never opened |
 | `DELETE /api/books/{id}` | drops the downloaded files and text |
 | `GET /api/books/{id}/pages/{n}.svg` | one page, images inlined, cached for good; 404 while not downloaded |
-| `GET /api/books/{id}/text/{n}` | the page's text runs `[[x, top, width, height, text]]` in the SVG's coordinates |
+| `GET /api/books/{id}/text/{n}` | the page's text runs `[[x, top, width, height, text]]` in the SVG's coordinates; `404` for a book not downloaded or a page it does not have (same for `pages/{n}.svg`) |
 | `GET /api/books/{id}/cover.jpg` | first page thumbnail |
-| `GET /api/books/search?q=&book=` | full text search (word prefixes, accents ignored): `[{book, page, label, snippet, title}]`, `[...]` marks the words; with `book` that book in page order (200 max), else the best 60 over all books |
+| `GET /api/books/search?q=&book=` | full text search (word prefixes, all words, accents ignored, ß = ss): `[{book, page, label, snippet, title}]`, `\x02...\x03` marks the words; with `book` that book in page order, else the best over all books (200 max) |
 | `GET/POST /api/books/login` | `{configured, user, blocked}` / `{user (email), password}`; empty password keeps it |
 
 ## MCP

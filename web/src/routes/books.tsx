@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, Outlet, useNavigate, useParams, useRouterState, useSearch } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { ArrowLeft, BookOpen, ListTree, Minus, Plus, RotateCw, Search, X } from 'lucide-react'
 import { ErrorView } from '@/components/ErrorView'
 import { Button } from '@/components/ui/button'
@@ -11,6 +12,7 @@ import {
   booksApi,
   booksQ,
   coverUrl,
+  fold,
   pageUrl,
   runMatches,
   searchWords,
@@ -85,7 +87,7 @@ function ShelfList({ active, className }: { active: number | null; className?: s
     }
   }
   const searching = q.length >= 2
-  const titleHits = searching ? books.filter((b) => b.title.toLowerCase().includes(q.toLowerCase())) : books
+  const titleHits = searching ? books.filter((b) => fold(b.title).includes(fold(q))) : books
   const grouped = useMemo(() => {
     const out = new Map<number, BookHit[]>()
     for (const h of hits.data ?? []) out.set(h.book, [...(out.get(h.book) ?? []), h])
@@ -144,6 +146,16 @@ function ShelfList({ active, className }: { active: number | null; className?: s
               {list.slice(0, 8).map((h) => (
                 <HitRow key={`${h.book}-${h.page}`} hit={h} q={q} />
               ))}
+              {list.length > 8 && (
+                <Link
+                  to="/books/$bookId"
+                  params={{ bookId: String(id) }}
+                  search={{ q }}
+                  className="block px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {list.length - 8} more
+                </Link>
+              )}
             </div>
           ))}
         {searching && hits.isFetching && !hits.data && <Skeleton className="mx-2 mt-2 h-12 rounded-lg" />}
@@ -229,10 +241,16 @@ function HitRow({ hit, q, onPick }: { hit: BookHit; q: string; onPick?: () => vo
 const ZOOMS = [0.6, 0.8, 1, 1.25, 1.5, 2]
 const BASE_WIDTH = 860
 
+/** Keyed by book: panel, search and scroll start fresh for every book. */
 export function BookPage() {
   const { bookId } = useParams({ from: '/shell/books/$bookId' })
+  return <Reader key={bookId} bookId={bookId} />
+}
+
+function Reader({ bookId }: { bookId: string }) {
   const { p, q } = useSearch({ from: '/shell/books/$bookId' })
   const id = Number(bookId)
+  const qc = useQueryClient()
   const navigate = useNavigate()
   const shelf = useQuery(booksQ.shelf())
   const book = useQuery(booksQ.book(id))
@@ -244,7 +262,8 @@ export function BookPage() {
   const [panel, setPanel] = useState<'toc' | 'search' | null>(q ? 'search' : null)
   const [term, setTerm] = useState(q ?? '')
   const liveTerm = useDebounced(term.trim(), 300)
-  const scroller = useRef<HTMLDivElement>(null)
+  const scroller = useRef<HTMLDivElement | null>(null)
+  const [root, setRoot] = useState<HTMLDivElement | null>(null)
   const pageEls = useRef(new Map<number, HTMLDivElement>())
 
   useEffect(() => localStorage.setItem(LAST, String(id)), [id])
@@ -256,8 +275,25 @@ export function BookPage() {
 
   const goTo = (n: number, smooth = false) => {
     const el = pageEls.current.get(n)
-    if (el) el.scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' })
+    if (el) el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: smooth ? 'smooth' : 'auto' })
   }
+
+  // the shelf shows the download state too
+  const state = book.data?.state
+  useEffect(() => {
+    if (state) void qc.invalidateQueries({ queryKey: ['books'] })
+  }, [state, qc])
+
+  // zooming keeps the page in view
+  const currentRef = useRef(current)
+  currentRef.current = current
+  const zoomed = useRef(zoom)
+  useLayoutEffect(() => {
+    if (zoomed.current === zoom) return
+    zoomed.current = zoom
+    goTo(currentRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom])
 
   // first paint: the page from the link (search hit), else where reading stopped
   const pages = b?.pages ?? []
@@ -268,7 +304,7 @@ export function BookPage() {
     if (started.current === key) return
     started.current = key
     const target = p ?? Number(localStorage.getItem(lastPageKey(id)))
-    if (target > 1) requestAnimationFrame(() => goTo(Math.min(target, pages.length)))
+    if (p ? target >= 1 : target > 1) requestAnimationFrame(() => goTo(Math.min(target, pages.length)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, p, pages.length])
 
@@ -296,7 +332,8 @@ export function BookPage() {
     return () => root.removeEventListener('scroll', onScroll)
   }, [id, pages.length])
 
-  const words = useMemo(() => searchWords(q ?? ''), [q])
+  const markTerm = panel === 'search' ? liveTerm : (q ?? '')
+  const words = useMemo(() => searchWords(markTerm), [markTerm])
   const width = Math.round(BASE_WIDTH * zoom)
   // up to 100 %: fit the screen, never wider than BASE_WIDTH; above: wider than the screen, scrolls sideways
   const column = zoom > 1 ? { width, minWidth: '100%' } : { maxWidth: width }
@@ -331,7 +368,12 @@ export function BookPage() {
         </div>
       )}
       <div className="relative flex min-h-0 flex-1">
-        <div ref={scroller} className="tm-scroll min-h-0 flex-1 overflow-auto bg-black/20">
+        <div
+          ref={(el) => {
+            scroller.current = el
+            setRoot(el)
+          }}
+          className="tm-scroll min-h-0 flex-1 overflow-auto bg-black/20">
           {book.isError && <ErrorView error={book.error} retry={() => void book.refetch()} />}
           {b?.state === 'error' && (
             <div className="flex flex-col items-center gap-3 p-6 text-center text-sm text-muted-foreground">
@@ -359,6 +401,7 @@ export function BookPage() {
                 ready={!loading || i < (b?.done ?? 0) || b?.state === 'ready'}
                 version={loading ? (b?.done ?? 0) : -1}
                 words={words}
+                root={root}
                 refCb={(el) => {
                   if (el) pageEls.current.set(i + 1, el)
                   else pageEls.current.delete(i + 1)
@@ -392,7 +435,7 @@ export function BookPage() {
               {panel === 'toc' ? (
                 <Toc book={b} current={current} onGo={(n) => (goTo(n), matchMedia('(min-width: 768px)').matches || setPanel(null))} />
               ) : (
-                <BookHits bookId={id} q={liveTerm} onPick={() => matchMedia('(min-width: 768px)').matches || setPanel(null)} />
+                <BookHits bookId={id} q={liveTerm} onPick={(n) => (goTo(n), matchMedia('(min-width: 768px)').matches || setPanel(null))} />
               )}
             </div>
           </aside>
@@ -431,6 +474,7 @@ function PageBox({ pages, current, onGo }: { pages: Book; current: number; onGo:
         const v = (value ?? '').trim().toLowerCase()
         const i = pages.pages.findIndex((p) => p.label.toLowerCase() === v)
         if (i >= 0) onGo(i + 1)
+        else if (v) toast.error(`No page ${v}`)
         setValue(null)
         ;(document.activeElement as HTMLElement | null)?.blur()
       }}
@@ -442,6 +486,12 @@ function PageBox({ pages, current, onGo }: { pages: Book; current: number; onGo:
         onFocus={(e) => (setValue(''), e.target.select())}
         onBlur={() => setValue(null)}
         onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            setValue(null)
+            e.currentTarget.blur()
+          }
+        }}
       />
     </form>
   )
@@ -469,7 +519,7 @@ function Toc({ book, current, onGo }: { book: Book; current: number; onGo: (n: n
   )
 }
 
-function BookHits({ bookId, q, onPick }: { bookId: number; q: string; onPick: () => void }) {
+function BookHits({ bookId, q, onPick }: { bookId: number; q: string; onPick: (page: number) => void }) {
   const hits = useQuery(booksQ.search(q, bookId))
   if (q.length < 2) return null
   if (hits.isPending) return <Skeleton className="m-2 h-12 rounded-lg" />
@@ -478,7 +528,7 @@ function BookHits({ bookId, q, onPick }: { bookId: number; q: string; onPick: ()
     <>
       <p className="px-3 py-1 text-xs text-muted-foreground">{hits.data.length >= 200 ? '200+' : hits.data.length} pages</p>
       {hits.data.map((h) => (
-        <HitRow key={h.page} hit={h} q={q} onPick={onPick} />
+        <HitRow key={h.page} hit={h} q={q} onPick={() => onPick(h.page)} />
       ))}
     </>
   )
@@ -494,21 +544,22 @@ type PageProps = {
   ready: boolean
   version: number
   words: string[]
+  root: HTMLElement | null
   refCb: (el: HTMLDivElement | null) => void
 }
 
 /** One page: a box of the page's shape; the SVG and its text load when the page comes near the view. */
-const Page = memo(function Page({ bookId, n, w, h, label, text, ready, version, words, refCb }: PageProps) {
+const Page = memo(function Page({ bookId, n, w, h, label, text, ready, version, words, root, refCb }: PageProps) {
   const box = useRef<HTMLDivElement | null>(null)
   const [near, setNear] = useState(false)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
     const el = box.current
-    if (!el) return
-    const io = new IntersectionObserver(([e]) => setNear(e.isIntersecting), { rootMargin: '150% 0px' })
+    if (!el || !root) return
+    const io = new IntersectionObserver(([e]) => setNear(e.isIntersecting), { root, rootMargin: '150% 0px' })
     io.observe(el)
     return () => io.disconnect()
-  }, [])
+  }, [root])
   // a page that was not there yet is tried again while the download goes on
   useEffect(() => {
     if (failed) setFailed(false)
