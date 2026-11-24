@@ -16,8 +16,9 @@ The Books tab is the digi4school.at shelf inside the hub: every school book of t
 - **Shelf** (left column): *Books* with the reload button, a search box, then every book of the account (newest school year first, one row per book) with cover, title, publisher and the download progress.
 - **Search** on the shelf: book titles, and from 2 letters the full text of every book opened once: hits per book with the printed page and a snippet; a hit opens the book on that page with the words marked.
 - **Reader**: the whole book as one scroll (pages load when they come near), white pages on the dark background.
-  - Header: title, the printed page in view (type a page, `U1` or `IV`, Enter jumps), *Contents*, *Search in book*, smaller and larger.
-  - The text lies invisible over each page: select, copy and the browser's Ctrl+F work; search words are marked yellow.
+  - Header: title, the printed page in view (type a page, `U1` or `IV`, Enter jumps), *Contents*, *Search in book*, smaller / zoom percent (click: fit width) / larger.
+  - Zoom: 100 % is the reader's width (at most 860 px). Pinch (touch and trackpad), Ctrl+wheel, Ctrl + / - / 0 and the buttons, 50 to 400 %. During a gesture the column is only scaled (smooth); at its end the zoom is set and the point under the pointer stays put.
+  - The text lies invisible over each page: select, copy and the browser's Ctrl+F work; search words are marked yellow. Copy turns the selected lines back into running text (line ends joined, `Zei-` + `chen` joined).
   - *Contents* (from the book's own bookmarks) marks the chapter in view; *Search in book* lists every page with a hit.
   - The page where reading stopped is kept per book in the browser; on a wide screen the book read last opens by itself.
 - **First open**: the book downloads into the hub. Text, contents and the first pages come first (seconds), then the rest (a thin bar under the header). A page not yet there shows grey and appears by itself.
@@ -50,7 +51,13 @@ Opening a book from the hub may end a viewer session of the same book in a brows
 
 ## Text on the page
 
-`content.xml` uses the PDF media box, the SVG the crop box: same scale, different origin (about 34 px left, 35 px up in the demo books). The offset per volume is voted from the first pages: rows of glyphs (`<use>` with a translate) whose letter count matches a text run vote for (run left - row x, run bottom - row baseline). x comes out exact; y is a few px off at most (run bottoms include descenders). Without agreement the media box is centred on the page. Then every run is snapped to its own glyph row (nearest row with a glyph at the run's left edge), so a page whose layout differs from the first pages still lines up. Stored runs are already in SVG coordinates. `PLACE` in `books.py` is the placement version: a book placed by an older one is downloaded again on its next open (pages already on disk are kept); the browser keeps old text runs until a reload.
+`content.xml` (pdftohtml) and the page SVG differ in origin (media box vs crop box, often 25 to 40 px), sometimes in scale, and pdftohtml pages are often two book pages wide (the old "centre the media box" guess was 466 px off there). Placement (`fit_offset`, `place_page` in `books.py`):
+
+1. Book offset per volume from the first 12 pages: glyph rows (`<use>` with a translate, the translate is the baseline) whose glyph count equals a run's letter count and whose extent fits the run's width vote for (run left - row x, run bottom - row baseline). Lines of a paragraph often have the same letter count, so the line above and below win votes too: the 6 strongest candidates of every scale (1, SVG width / content width, SVG height / content height) are placed for real and the one that puts most runs onto rows with their letter count wins; x is then settled so runs start at a glyph with nothing just before it.
+2. Per page: pages of one book are cropped differently (in book 6671 by 13 px in x between chapters), so each page searches its own shift near the book's (y +-14, x +-14).
+3. Per run (`snap_runs`): of the glyph rows within 0.75 run heights, the one with as many glyphs under the run as it has letters, then the nearest; a run without leading spaces starts at its first glyph. pdftohtml's top is the font's ascent above the baseline, which differs per font, so y is only right after this step.
+
+Measured on three of his books (2026-11-24): 84 to 94 % of runs exactly on their glyph row and first letter (the rest: formulas, single letters, labels in figures), was 0 to 45 %. Without agreement the media box is centred. Stored runs are already in SVG coordinates. `PLACE` in `books.py` is the placement version: a book placed by an older one is downloaded again on its next open (pages already on disk are kept); the browser keeps old text runs until a reload.
 
 The reader draws the runs as transparent SVG `<text>` with `textLength` over the page image (CSS `.book-text` in `index.css`).
 

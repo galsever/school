@@ -238,8 +238,160 @@ function HitRow({ hit, q, onPick }: { hit: BookHit; q: string; onPick?: () => vo
 
 // ---- reader ----------------------------------------------------------------------------------
 
-const ZOOMS = [0.6, 0.8, 1, 1.25, 1.5, 2]
+/** Zoom is relative to the fitted width (the reader's width, at most BASE_WIDTH): 100 % always fits. */
+const ZOOMS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 2.5, 3, 4]
+const MIN_ZOOM = ZOOMS[0]
+const MAX_ZOOM = ZOOMS[ZOOMS.length - 1]
 const BASE_WIDTH = 860
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
+const stepUp = (z: number) => ZOOMS.find((s) => s > z + 0.01) ?? MAX_ZOOM
+const stepDown = (z: number) => [...ZOOMS].reverse().find((s) => s < z - 0.01) ?? MIN_ZOOM
+
+type Anchor = { el: HTMLElement; fx: number; fy: number; cx: number; cy: number }
+
+/** Pinch (touch and trackpad), Ctrl+wheel, Ctrl +/-/0 and the buttons. While a gesture runs the column is only scaled
+ * (cheap, smooth); at its end the zoom is set and the point under the fingers or the pointer stays where it was. */
+function useZoom(
+  scroller: HTMLDivElement | null,
+  column: React.RefObject<HTMLDivElement | null>,
+  pageEls: React.RefObject<Map<number, HTMLDivElement>>,
+) {
+  const [zoom, setZoomState] = useState(() => clampZoom(Number(localStorage.getItem('books:zoom')) || 1))
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+  const anchor = useRef<Anchor | null>(null)
+  const live = useRef<{ anchor: Anchor | null; scale: number; timer: number } | null>(null)
+
+  useEffect(() => localStorage.setItem('books:zoom', String(zoom)), [zoom])
+
+  const anchorAt = (cx: number, cy: number): Anchor | null => {
+    let best: HTMLElement | null = null
+    let dist = Infinity
+    for (const el of pageEls.current.values()) {
+      const r = el.getBoundingClientRect()
+      const d = cy < r.top ? r.top - cy : cy > r.bottom ? cy - r.bottom : 0
+      if (d < dist) [best, dist] = [el, d]
+      if (d === 0) break
+    }
+    if (!best) return null
+    const r = best.getBoundingClientRect()
+    return { el: best, fx: (cx - r.left) / r.width, fy: (cy - r.top) / r.height, cx, cy }
+  }
+
+  // after the new width is laid out: the anchor point back under the pointer
+  useLayoutEffect(() => {
+    const a = anchor.current
+    anchor.current = null
+    if (!a || !scroller) return
+    const r = a.el.getBoundingClientRect()
+    scroller.scrollLeft += r.left + a.fx * r.width - a.cx
+    scroller.scrollTop += r.top + a.fy * r.height - a.cy
+  }, [zoom, scroller])
+
+  const commit = (next: number, a: Anchor | null) => {
+    if (column.current) column.current.style.transform = ''
+    next = clampZoom(Math.round(next * 100) / 100)
+    if (next === zoomRef.current) return
+    anchor.current = a
+    setZoomState(next)
+  }
+
+  const setZoom = (next: number) => {
+    if (!scroller) return setZoomState(clampZoom(next))
+    const r = scroller.getBoundingClientRect()
+    commit(next, anchorAt(r.left + r.width / 2, r.top + r.height / 3))
+  }
+
+  useEffect(() => {
+    if (!scroller) return
+    const begin = (cx: number, cy: number) => {
+      const col = column.current
+      if (!col) return
+      const r = col.getBoundingClientRect()
+      col.style.transformOrigin = `${cx - r.left}px ${cy - r.top}px`
+      live.current = { anchor: anchorAt(cx, cy), scale: 1, timer: 0 }
+    }
+    const scaleTo = (scale: number) => {
+      const g = live.current
+      if (!g || !column.current) return
+      const z = zoomRef.current
+      g.scale = clampZoom(z * scale) / z
+      column.current.style.transform = `scale(${g.scale})`
+    }
+    const end = () => {
+      const g = live.current
+      live.current = null
+      if (g) commit(zoomRef.current * g.scale, g.anchor)
+    }
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      if (!live.current) begin(e.clientX, e.clientY)
+      const g = live.current
+      if (!g) return
+      const delta = Math.max(-60, Math.min(60, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY))
+      scaleTo(g.scale * Math.exp(-delta * 0.004))
+      clearTimeout(g.timer)
+      g.timer = window.setTimeout(end, 160)
+    }
+    let startDist = 0
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return
+      startDist = dist(e.touches)
+      begin((e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2)
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (!startDist || e.touches.length !== 2) return
+      e.preventDefault()
+      scaleTo(dist(e.touches) / startDist)
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      if (startDist && e.touches.length < 2) {
+        startDist = 0
+        end()
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const z = zoomRef.current
+      if (e.key === '+' || e.key === '=') setZoom(stepUp(z))
+      else if (e.key === '-') setZoom(stepDown(z))
+      else if (e.key === '0') setZoom(1)
+      else return
+      e.preventDefault()
+    }
+    scroller.addEventListener('wheel', onWheel, { passive: false })
+    scroller.addEventListener('touchstart', onTouchStart, { passive: true })
+    scroller.addEventListener('touchmove', onTouchMove, { passive: false })
+    scroller.addEventListener('touchend', onTouchEnd)
+    scroller.addEventListener('touchcancel', onTouchEnd)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      scroller.removeEventListener('wheel', onWheel)
+      scroller.removeEventListener('touchstart', onTouchStart)
+      scroller.removeEventListener('touchmove', onTouchMove)
+      scroller.removeEventListener('touchend', onTouchEnd)
+      scroller.removeEventListener('touchcancel', onTouchEnd)
+      window.removeEventListener('keydown', onKey)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scroller])
+
+  return { zoom, setZoom, smaller: () => setZoom(stepDown(zoom)), larger: () => setZoom(stepUp(zoom)) }
+}
+
+/** The reader's inner width, for the fitted page width. */
+function useWidth(el: HTMLElement | null) {
+  const [w, setW] = useState(0)
+  useEffect(() => {
+    if (!el) return
+    const ro = new ResizeObserver(() => setW(el.clientWidth))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [el])
+  return w
+}
 
 /** Keyed by book: panel, search and scroll start fresh for every book. */
 export function BookPage() {
@@ -257,7 +409,6 @@ function Reader({ bookId }: { bookId: string }) {
   const entry = shelf.data?.books.find((b) => b.id === id)
   const b = book.data
   const title = b?.title || entry?.title || ''
-  const [zoom, setZoom] = useState(() => Number(localStorage.getItem('books:zoom')) || 1)
   const [current, setCurrent] = useState(1)
   const [panel, setPanel] = useState<'toc' | 'search' | null>(q ? 'search' : null)
   const [term, setTerm] = useState(q ?? '')
@@ -265,9 +416,11 @@ function Reader({ bookId }: { bookId: string }) {
   const scroller = useRef<HTMLDivElement | null>(null)
   const [root, setRoot] = useState<HTMLDivElement | null>(null)
   const pageEls = useRef(new Map<number, HTMLDivElement>())
+  const columnRef = useRef<HTMLDivElement | null>(null)
+  const { zoom, setZoom, smaller, larger } = useZoom(root, columnRef, pageEls)
+  const viewWidth = useWidth(root)
 
   useEffect(() => localStorage.setItem(LAST, String(id)), [id])
-  useEffect(() => localStorage.setItem('books:zoom', String(zoom)), [zoom])
   useEffect(() => {
     setTerm(q ?? '')
     if (q) setPanel('search')
@@ -278,22 +431,29 @@ function Reader({ bookId }: { bookId: string }) {
     if (el) el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: smooth ? 'smooth' : 'auto' })
   }
 
+  // copying from the page: lines back into running text ("Zei-" + "chen" -> "Zeichen")
+  useEffect(() => {
+    if (!root) return
+    const onCopy = (e: ClipboardEvent) => {
+      const sel = getSelection()
+      if (!sel || sel.isCollapsed || !sel.anchorNode?.parentElement?.closest('.book-text')) return
+      const text = sel
+        .toString()
+        .replace(/(\p{Ll})-\n(?=\p{Ll})/gu, '$1')
+        .replace(/[ \t]*\n[ \t]*/g, ' ')
+        .trim()
+      e.clipboardData?.setData('text/plain', text)
+      e.preventDefault()
+    }
+    root.addEventListener('copy', onCopy)
+    return () => root.removeEventListener('copy', onCopy)
+  }, [root])
+
   // the shelf shows the download state too
   const state = book.data?.state
   useEffect(() => {
     if (state) void qc.invalidateQueries({ queryKey: ['books'] })
   }, [state, qc])
-
-  // zooming keeps the page in view
-  const currentRef = useRef(current)
-  currentRef.current = current
-  const zoomed = useRef(zoom)
-  useLayoutEffect(() => {
-    if (zoomed.current === zoom) return
-    zoomed.current = zoom
-    goTo(currentRef.current)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoom])
 
   // first paint: the page from the link (search hit), else where reading stopped
   const pages = b?.pages ?? []
@@ -334,9 +494,9 @@ function Reader({ bookId }: { bookId: string }) {
 
   const markTerm = panel === 'search' ? liveTerm : (q ?? '')
   const words = useMemo(() => searchWords(markTerm), [markTerm])
-  const width = Math.round(BASE_WIDTH * zoom)
-  // up to 100 %: fit the screen, never wider than BASE_WIDTH; above: wider than the screen, scrolls sideways
-  const column = zoom > 1 ? { width, minWidth: '100%' } : { maxWidth: width }
+  const pad = viewWidth >= 768 ? 24 : 16
+  const fit = Math.min(BASE_WIDTH, Math.max(200, viewWidth - pad))
+  const width = Math.round(fit * zoom) + pad
   const loading = b?.state === 'loading' || b?.state === 'text'
 
   return (
@@ -354,10 +514,17 @@ function Reader({ bookId }: { bookId: string }) {
           <Search className="size-4" />
         </IconButton>
         <span className="hidden items-center sm:flex">
-          <IconButton label="Smaller" disabled={zoom <= ZOOMS[0]} onClick={() => setZoom(ZOOMS[Math.max(0, ZOOMS.indexOf(zoom) - 1)] ?? 1)}>
+          <IconButton label="Smaller" disabled={zoom <= MIN_ZOOM} onClick={smaller}>
             <Minus className="size-4" />
           </IconButton>
-          <IconButton label="Larger" disabled={zoom >= ZOOMS[ZOOMS.length - 1]} onClick={() => setZoom(ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(zoom) + 1)] ?? 1)}>
+          <button
+            className="h-8 w-12 rounded-md text-xs text-muted-foreground tabular-nums hover:bg-white/10 hover:text-foreground"
+            onClick={() => setZoom(1)}
+            title="Fit width"
+          >
+            {Math.round(zoom * 100)} %
+          </button>
+          <IconButton label="Larger" disabled={zoom >= MAX_ZOOM} onClick={larger}>
             <Plus className="size-4" />
           </IconButton>
         </span>
@@ -373,7 +540,7 @@ function Reader({ bookId }: { bookId: string }) {
             scroller.current = el
             setRoot(el)
           }}
-          className="tm-scroll min-h-0 flex-1 overflow-auto bg-black/20">
+          className="tm-scroll min-h-0 flex-1 touch-pan-x touch-pan-y overflow-auto bg-black/20">
           {book.isError && <ErrorView error={book.error} retry={() => void book.refetch()} />}
           {b?.state === 'error' && (
             <div className="flex flex-col items-center gap-3 p-6 text-center text-sm text-muted-foreground">
@@ -384,11 +551,11 @@ function Reader({ bookId }: { bookId: string }) {
             </div>
           )}
           {(book.isPending || (b && !pages.length && b.state !== 'error')) && (
-            <div className="mx-auto flex w-full flex-col gap-3 p-3" style={{ maxWidth: width }}>
+            <div className="mx-auto flex w-full flex-col gap-3 p-2 md:p-3" style={{ maxWidth: width }}>
               <Skeleton className="aspect-[909/1286] w-full rounded" />
             </div>
           )}
-          <div className={cn('mx-auto flex flex-col gap-3 p-2 md:p-3', zoom <= 1 && 'w-full')} style={column}>
+          <div ref={columnRef} className="mx-auto flex flex-col gap-3 p-2 will-change-transform md:p-3" style={{ width: viewWidth ? width : undefined }}>
             {pages.map((pg, i) => (
               <Page
                 key={i + 1}

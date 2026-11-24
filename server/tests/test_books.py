@@ -212,10 +212,42 @@ def test_mcp_tools(fake):
     assert out["text"].startswith("--- page 1") and "capped" not in out
 
 
-def test_fit_offset_pools_pages():
-    page = ([(10 + 5 * i, 21.0) for i in range(8)] + [(10 + 5 * i, 41.0) for i in range(9)], [[15, 18, 40, 10, "Achtzehn"], [15, 38, 40, 10, "Neunzehnt"]])
-    assert bk.fit_offset([page] * 5) == (5.0, 7.0)
-    assert bk.fit_offset([page]) is None  # two votes are not enough
+def _layout(counts, shift=(0.0, 0.0), scale=1.0):
+    """A page of lines (glyphs 5 apart, baselines 20 apart) and its pdftohtml runs: media box 30 px left and
+    25 px up of the crop box, run top 8 px above the baseline, height 10; content scaled down by `scale`."""
+    points, runs = [], []
+    for i, n in enumerate(counts):
+        base = 100 + 20 * i
+        left = 100 + 60 * (i % 3)  # indents, so a wrong scale shows in x too
+        points += [(left + shift[0] + 5 * k, base + shift[1]) for k in range(n)]
+        runs.append([(left + 30) / scale, (base - 8 + 25) / scale, 5 * n / scale, 10 / scale, "x" * (n // 2) + " " + "y" * (n - n // 2)])
+    return points, runs
+
+
+def _check(points, placed):
+    rows = {round(y, 1) for _, y in points}
+    for x, t, w, h, _ in placed:
+        assert round(t + bk.BASELINE * h, 1) in rows and any(abs(gx - x) < 0.01 for gx, _ in points), (x, t)
+
+
+def test_fit_offset_takes_the_right_line():
+    # most lines have the same letter count, so the line above and below vote too
+    pages = [_layout([12, 12, 13, 12, 12, 14, 12, 12])] * 4
+    sc, ox, oy = bk.fit_offset(pages)
+    assert sc == 1.0 and ox == 30.0
+    for points, runs in pages:
+        _check(points, bk.place_page(points, [[x - ox, y - oy, w, h, t] for x, y, w, h, t in runs]))
+    assert bk.fit_offset(pages[:1][:0]) is None
+
+
+def test_fit_offset_scale_and_page_shift():
+    counts = [12, 15, 11, 13, 16, 12, 14, 9]
+    pages = [_layout(counts, scale=1.05)] * 4
+    sc, ox, oy = bk.fit_offset(pages, (1.0, 1.05))
+    assert sc == 1.05
+    # one page cropped 6 px further right and 9 px lower than the others: place_page finds it
+    points, runs = _layout(counts, shift=(6, 9), scale=1.05)
+    _check(points, bk.place_page(points, [[x * sc - ox, y * sc - oy, w * sc, h * sc, t] for x, y, w, h, t in runs]))
 
 
 def test_page_text_joins_words():

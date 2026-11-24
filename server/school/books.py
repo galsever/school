@@ -421,68 +421,152 @@ def glyph_points(svg: str) -> list[tuple[float, float]]:
 MAX_OFFSET = 150  # media box vs crop box: bleed and crop marks, never half a page
 
 
-def fit_offset(pages: list[tuple[list[tuple[float, float]], list]]) -> tuple[float, float] | None:
-    """content.xml (PDF media box) and the page SVG (crop box) share the scale, not the origin. Over several pages, rows
-    of glyphs whose count equals a text run's letter count vote for (run left - row x, run bottom - row baseline).
-    Votes are counted as pairs in a small window (x +-1, y +-4: run bottoms include descenders) and only within
-    MAX_OFFSET: rows that merely have the same letter count as some other run (running heads, page numbers) scatter.
-    None when the votes do not agree."""
+def _fit(pages: list[tuple[list[tuple[float, float]], list]], scale: float) -> list[tuple[float, float]]:
+    """Candidate offsets (ox, oy) for runs scaled by `scale`, strongest votes first."""
     votes = collections.Counter()
+    lead_votes = collections.Counter()
     for points, runs in pages:
         rows = collections.defaultdict(list)
         for x, y in points:
             rows[round(y)].append(x)
         by_count = collections.defaultdict(list)
         for y, xs in rows.items():
-            by_count[len(xs)].append((min(xs), y))
+            by_count[len(xs)].append((min(xs), max(xs) - min(xs), y))
         for l, t, w, h, text in runs:
             n = len(re.sub(r"\s", "", text))
-            if n >= 6:
-                for x, y in by_count.get(n, []):
-                    dx, dy = round(l - x), round(t + h - y)
-                    if abs(dx) <= MAX_OFFSET and abs(dy) <= MAX_OFFSET:
-                        votes[(dx, dy)] += 1
-    if not votes:
-        return None
-    total = sum(votes.values())
+            if n < 6:
+                continue
+            l, t, w, h = l * scale, t * scale, w * scale, h * scale
+            # leading spaces: the run box starts before the first letter, such runs only count when there are no others
+            into = lead_votes if text[:1].isspace() else votes
+            for x, span, y in by_count.get(n, []):
+                if not 0.7 * w - 3 <= span <= w + 3:
+                    continue
+                dx, dy = round(l - x), round(t + h - y)
+                if abs(dx) <= MAX_OFFSET and abs(dy) <= MAX_OFFSET:
+                    into[(dx, dy)] += 1
+    votes = votes or lead_votes
 
     def score(x: int, y: int) -> int:
         return sum(votes.get((x + i, y + j), 0) for i in (-1, 0, 1) for j in range(-4, 5))
 
-    best = max(votes, key=lambda v: (score(*v), votes[v]))
-    k = score(*best)
-    if k < 8 or k < 0.12 * total:
+    # the strongest vote windows, each at least a few px from the ones before (the line above and below vote too)
+    out: list[tuple[float, float]] = []
+    for v in sorted(votes, key=lambda v: (score(*v), votes[v]), reverse=True):
+        if len(out) >= 6:
+            break
+        if score(*v) < 3 or any(abs(v[0] - x) <= 2 and abs(v[1] - y) <= 8 for x, y in out):
+            continue
+        # y: the votes within +-4 of the window (fonts with and without descenders); snap_runs finishes each run
+        near = {u: c for u, c in votes.items() if u[0] == v[0] and abs(u[1] - v[1]) <= 4}
+        out.append((float(v[0]), float(round(sum(u[1] * c for u, c in near.items()) / sum(near.values())))))
+    return out
+
+
+def fit_quality(pages: list[tuple[list[tuple[float, float]], list]], placed_pages: list[list], tol: float | None = None, xtol: float = 4) -> int:
+    """Runs (4+ letters) that, once snapped, lie on a glyph row with as many glyphs under them as they have letters."""
+    ok = 0
+    for (points, _), runs in zip(pages, placed_pages):
+        rows = collections.defaultdict(list)
+        for x, y in points:
+            rows[round(y, 1)].append(x)
+        for x, t, w, h, text in snap_runs(points, runs, tol):
+            n = len(re.sub(r"\s", "", text))
+            if n < 4:
+                continue
+            xs = rows.get(round(t + BASELINE * h, 1))
+            if xs and abs(sum(1 for g in xs if x - xtol <= g <= x + w + 2) - n) <= max(1, n // 10):
+                ok += 1
+    return ok
+
+
+def fit_offset(pages: list[tuple[list[tuple[float, float]], list]], scales: tuple[float, ...] = (1.0,)) -> tuple[float, float, float] | None:
+    """content.xml (pdftohtml, PDF media box, sometimes two pages wide) and the page SVG (crop box) differ in origin and
+    sometimes in scale. Over several pages, rows of glyphs whose count equals a text run's letter count and whose
+    extent fits the run's width vote for (run left - row x, run bottom - row baseline), within MAX_OFFSET. Lines of a
+    paragraph often have the same letter count, so the line above or below wins votes too: the strongest candidates
+    of every scale are placed for real (snap_runs) and the one that puts most runs onto rows with their letter count
+    wins. (scale, ox, oy): svg = content * scale - offset. None when nothing fits."""
+    best, best_q = None, (0, 0)
+    eligible = sum(1 for _, runs in pages for r in runs if len(re.sub(r"\s", "", r[4])) >= 4)
+    for scale in dict.fromkeys(round(s, 4) for s in scales if 0.5 < s < 2):
+        for ox, oy in _fit(pages, scale):
+            placed = [[[x * scale - ox, y * scale - oy, w * scale, h * scale, t] for x, y, w, h, t in runs] for _, runs in pages]
+            # ties (a wrong scale still lands most runs on their rows): the one whose runs start at a glyph
+            q = (fit_quality(pages, placed), sum(_starts(p, r) for (p, _), r in zip(pages, placed)))
+            if q > best_q:
+                best, best_q = (scale, ox, oy), q
+    if not best or best_q[0] < max(5, 0.2 * eligible):
         return None
-    # x: the strongest column near the best window; y: the votes of that column within +-12 (two clusters are usual:
-    # fonts with and without descenders); snap_runs puts each run on its own glyph row afterwards
-    col = collections.Counter()
-    for (x, y), c in votes.items():
-        if abs(x - best[0]) <= 1 and abs(y - best[1]) <= 12:
-            col[x] += c
-    ox = col.most_common(1)[0][0]
-    near = {v: c for v, c in votes.items() if v[0] == ox and abs(v[1] - best[1]) <= 12}
-    oy = sum(v[1] * c for v, c in near.items()) / sum(near.values())
-    return float(ox), float(round(oy))
+    # y needs no more here: pdftohtml's top is the font's ascent above the baseline, which differs per font, and
+    # snap_runs settles every run on its row. x is the left of the first letter, the same for every run of a page
+    scale, ox0, oy = best
+    placed = [[[x * scale - ox0, y * scale - oy, w * scale, h * scale, t] for x, y, w, h, t in runs] for _, runs in pages]
+    dx = max(range(-12, 13), key=lambda d: (sum(_starts(p, r, d) for (p, _), r in zip(pages, placed)), -abs(d)))
+    return scale, ox0 - dx, oy
+
+
+def _starts(points: list[tuple[float, float]], runs: list, dx: float = 0, dy: float = 0) -> int:
+    """Runs (without leading spaces) that, moved by (dx, dy) and snapped to their row, start at a glyph with no other
+    glyph just before it: how well x fits."""
+    rows = collections.defaultdict(list)
+    for gx, gy in points:
+        rows[round(gy, 1)].append(gx)
+    moved = [[x + dx, y + dy, w, h, t] for x, y, w, h, t in runs if not t[:1].isspace() and len(t.strip()) > 1]
+    ok = 0
+    for x, t, w, h, _ in snap_runs(points, moved, fix_x=False):
+        xs = rows.get(round(t + BASELINE * h, 1)) or []
+        if any(abs(g - x) <= 1.5 for g in xs) and not any(x - 0.5 * h <= g < x - 1.5 for g in xs):
+            ok += 1
+    return ok
+
+
+def place_page(points: list[tuple[float, float]], runs: list) -> list:
+    """Runs already moved by the book's offset onto this page's glyphs. Pages of one book are cropped differently
+    (a few px, sometimes more than half a line): the page's own shift is searched near the book's, then every run is
+    snapped to its row."""
+    if not points or not runs:
+        return runs
+    dy = max(range(-14, 15, 2), key=lambda d: (fit_quality([(points, runs)], [[[x, y + d, w, h, t] for x, y, w, h, t in runs]]), -abs(d)))
+    dx = max(range(-14, 15), key=lambda d: (_starts(points, runs, d, dy), -abs(d)))
+    if _starts(points, runs, dx, dy) < 3:
+        dx = 0
+    return snap_runs(points, [[round(x + dx, 1), round(y + dy, 1), w, h, t] for x, y, w, h, t in runs])
 
 
 BASELINE = 0.8  # the reader draws a run's text at top + 0.8 * height
 
 
-def snap_runs(points: list[tuple[float, float]], runs: list) -> list:
-    """Puts each run (already moved by the book's offset) on the glyph row it belongs to: the nearest row with a glyph
-    where the run starts. Runs without such a row stay where they are."""
+def snap_runs(points: list[tuple[float, float]], runs: list, tol: float | None = None, fix_x: bool = True) -> list:
+    """Puts each run (already moved by the book's offset) on the glyph row it belongs to: of the rows within `tol`
+    (default 0.75 of the run height, a line pitch is about one height) with a glyph where the run starts, the one with
+    as many glyphs under the run as it has letters, then the nearest. A run without leading spaces also starts at its
+    first glyph (its right end stays). Runs without such a row stay where they are."""
     rows = collections.defaultdict(list)
     for x, y in points:
         rows[round(y, 1)].append(x)
     out = []
     for x, top, w, h, t in runs:
         base = top + BASELINE * h
+        n = len(re.sub(r"\s", "", t))
+        limit = tol if tol is not None else max(6.0, 0.75 * h)
         best = None
         for y, xs in rows.items():
             d = abs(y - base)
-            if d <= max(6.0, 0.6 * h) and (best is None or d < best[0]) and any(abs(gx - x) <= 3 for gx in xs):
-                best = (d, y)
-        out.append([x, round(best[1] - BASELINE * h, 1), w, h, t] if best else [x, top, w, h, t])
+            if d > limit or not any(x - 3 <= gx <= x + h for gx in xs):
+                continue
+            miss = abs(sum(1 for g in xs if x - 4 <= g <= x + w + 2) - n)
+            key = (miss > max(1, n // 10), d)
+            if best is None or key < best[0]:
+                best = (key, y)
+        if not best:
+            out.append([x, top, w, h, t])
+            continue
+        y = best[1]
+        if fix_x and not t[:1].isspace():
+            gx = min((g for g in rows[y] if abs(g - x) <= 0.6 * h), key=lambda g: abs(g - x), default=x)
+            x, w = gx, w + x - gx
+        out.append([round(x, 1), round(y - BASELINE * h, 1), round(w, 1), h, t])
     return out
 
 
@@ -587,7 +671,7 @@ _jobs: dict[int, asyncio.Task] = {}
 _progress: dict[int, list[int]] = {}  # book -> [pages done, pages]
 
 
-PLACE = 2  # text placement version: books placed by an older one are downloaded again (pages on disk are kept)
+PLACE = 3  # text placement version: books placed by an older one are downloaded again (pages on disk are kept)
 
 
 def ensure(book: dict, force: bool = False) -> None:
@@ -810,29 +894,38 @@ async def _download(book: dict) -> None:
         if sized:
             default = (sized["w"], sized["h"])
         text_pages = []
-        start = 1
-        for part, pv, layout, count, labs, content in plan:
-            sample = [
-                (glyph_points(raws[n]), content[n - start + 1]["runs"])
-                for n in range(start, start + min(FIRST_PAGES, count))
-                if n in raws and (n - start + 1) in content
-            ]
-            off = fit_offset(sample)
-            if off:
-                ox, oy = off
-            else:  # no agreement: centre the media box on the page
+
+        def place_all() -> None:  # CPU work (about a second per volume): off the event loop
+            start = 1
+            for part, pv, layout, count, labs, content in plan:
+                sample = [
+                    (glyph_points(raws[n]), content[n - start + 1]["runs"])
+                    for n in range(start, start + min(FIRST_PAGES, count))
+                    if n in raws and (n - start + 1) in content
+                ]
                 cp = next(iter(content.values()), None)
-                ox = (cp["w"] - default[0]) / 2 if cp and default[0] else 0.0
-                oy = (cp["h"] - default[1]) / 2 if cp and default[1] else 0.0
-            log.info("book %s volume %r: text offset %s", bid, part, (ox, oy) if off else f"centred ({ox}, {oy})")
-            for i in range(1, count + 1):
-                cp = content.get(i)
-                placed = [[round(x - ox, 1), round(y - oy, 1), w, h, t] for x, y, w, h, t in (cp["runs"] if cp else [])]
-                n = start + i - 1
-                if n in raws:
-                    placed = snap_runs(glyph_points(raws[n]), placed)
-                text_pages.append((n, pages[n - 1]["label"], placed))
-            start += count
+                scales = (1.0, default[0] / cp["w"], default[1] / cp["h"]) if cp and default[0] and cp["w"] and cp["h"] else (1.0,)
+                off = fit_offset(sample, scales)
+                if off:
+                    sc, ox, oy = off
+                else:  # no agreement: centre the media box on the page
+                    sc = 1.0
+                    ox = (cp["w"] - default[0]) / 2 if cp and default[0] else 0.0
+                    oy = (cp["h"] - default[1]) / 2 if cp and default[1] else 0.0
+                log.info("book %s volume %r: text scale %s offset %s", bid, part, sc, (ox, oy) if off else f"centred ({ox}, {oy})")
+                for i in range(1, count + 1):
+                    cp = content.get(i)
+                    placed = [
+                        [round(x * sc - ox, 1), round(y * sc - oy, 1), round(w * sc, 1), round(h * sc, 1), t]
+                        for x, y, w, h, t in (cp["runs"] if cp else [])
+                    ]
+                    n = start + i - 1
+                    if n in raws:
+                        placed = place_page(glyph_points(raws[n]), placed)
+                    text_pages.append((n, pages[n - 1]["label"], placed))
+                start += count
+
+        await asyncio.to_thread(place_all)
         snapped = set(raws)
         raws.clear()
         has_text = any(r for _, _, r in text_pages)
@@ -851,7 +944,7 @@ async def _download(book: dict) -> None:
             for n, label, placed in text_pages:
                 f = page_file(bid, n)
                 if n not in snapped and placed and f.is_file():
-                    placed = snap_runs(glyph_points(f.read_text()), placed)
+                    placed = place_page(glyph_points(f.read_text()), placed)
                 out.append((n, label, placed))
             store_text(bid, out)
 
