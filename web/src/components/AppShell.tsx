@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { CalendarX, ClipboardList, GraduationCap, Mail, MessageSquare, Settings, Users } from 'lucide-react'
+import { BookOpen, CalendarX, ClipboardList, GraduationCap, Mail, MessageSquare, Settings, Users } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { q } from '@/lib/query'
 import type { Chat } from '@/lib/types'
@@ -14,6 +14,7 @@ const nav = [
   { to: '/mail', label: 'Mail', icon: Mail },
   { to: '/absences', label: 'Absences', icon: CalendarX },
   { to: '/moodle', label: 'Moodle', icon: GraduationCap },
+  { to: '/books', label: 'Books', icon: BookOpen },
   { to: '/settings', label: 'Settings', icon: Settings },
 ] as const
 
@@ -50,7 +51,7 @@ export function AppShell() {
     document.title = unread ? `(${unread}) School` : 'School'
   }, [unread])
   // On phones a detail page covers the whole screen, without the bottom bar
-  const detail = useRouterState({ select: (s) => /^\/(chats|teams|mail|moodle|assignments\/[^/]+)\/[^/]+/.test(s.location.pathname) })
+  const detail = useRouterState({ select: (s) => /^\/(chats|teams|mail|moodle|books|assignments\/[^/]+)\/[^/]+/.test(s.location.pathname) })
 
   return (
     <div className="flex h-full flex-col md:flex-row">

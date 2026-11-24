@@ -148,6 +148,31 @@ const moodleCourseRoute = createRoute({
   component: lazyRouteComponent(() => import('@/routes/moodle'), 'CoursePage'),
 })
 
+const booksRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: '/books',
+  component: lazyRouteComponent(() => import('@/routes/books'), 'BooksLayout'),
+})
+
+const booksIndexRoute = createRoute({
+  getParentRoute: () => booksRoute,
+  path: '/',
+  component: lazyRouteComponent(() => import('@/routes/books'), 'NoBook'),
+})
+
+const bookRoute = createRoute({
+  getParentRoute: () => booksRoute,
+  path: '$bookId',
+  // p: viewer page to open, q: search words to mark
+  validateSearch: (s: Record<string, unknown>): { p?: number; q?: string } => {
+    const out: { p?: number; q?: string } = {}
+    if (Number.isInteger(Number(s.p)) && Number(s.p) > 0) out.p = Number(s.p)
+    if (typeof s.q === 'string' && s.q.trim()) out.q = s.q
+    return out
+  },
+  component: lazyRouteComponent(() => import('@/routes/books'), 'BookPage'),
+})
+
 const settingsRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: '/settings',
@@ -166,6 +191,7 @@ const routeTree = rootRoute.addChildren([
     assignmentRoute,
     absencesRoute,
     moodleRoute.addChildren([moodleIndexRoute, moodleCourseRoute]),
+    booksRoute.addChildren([booksIndexRoute, bookRoute]),
     settingsRoute,
   ]),
 ])

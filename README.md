@@ -1,8 +1,8 @@
 # School
 
-Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tailnet only, Pocket ID login): a fast Microsoft Teams client (chats, channels, meeting chats, teams, assignments), the school mail, the WebUntis absences with own reasons per day, the Entschuldigung PDF and attendance per subject (the former excuses app), and the school Moodle (courses, files, assignments with hand-in, grades). One MCP endpoint at `/api/mcp` for all of it, plus WebUntis timetable, exams and homework (docs/API.md).
+Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tailnet only, Pocket ID login): a fast Microsoft Teams client (chats, channels, meeting chats, teams, assignments), the school mail, the WebUntis absences with own reasons per day, the Entschuldigung PDF and attendance per subject (the former excuses app), the school Moodle (courses, files, assignments with hand-in, grades) and the digi4school books (reader, full text search). One MCP endpoint at `/api/mcp` for all of it, plus WebUntis timetable, exams and homework (docs/API.md).
 
-- Server: Python 3.12, FastAPI, httpx. Talks to Microsoft, WebUntis and Moodle directly, no browser, no app registration.
+- Server: Python 3.12, FastAPI, httpx. Talks to Microsoft, WebUntis, Moodle and digi4school directly, no browser, no app registration.
 - Website: React 19, TypeScript, Tailwind, shadcn/ui, TanStack Router / Query (same stack as earworm). Contract: [docs/API.md](docs/API.md).
 - Android app: planned, native Kotlin like earworm, same API.
 
@@ -16,7 +16,8 @@ Personal school hub for HTL Spengergasse at **https://school.galsever.com** (tai
 | Mail | school Outlook: inbox, sent, archive, search, conversations shown like a chat, mails in their own look (darkened), reply, reply all, forward and new mail with formatting and attachments. Details: [docs/MAIL.md](docs/MAIL.md) |
 | Absences | WebUntis absences with own reasons per day, the Entschuldigung PDF, attendance per subject. Details: [docs/ABSENCES.md](docs/ABSENCES.md) |
 | Moodle | courses shaped like Moodle (files open in one click), search over all courses, assignments with hand-in, grades, choices with voting, publications with upload. Details: [docs/MOODLE.md](docs/MOODLE.md) |
-| Settings | Microsoft account, WebUntis login, Moodle login, notifications |
+| Books | the digi4school shelf; a book downloads when opened, then reads as one long scroll with selectable text, contents and search (in the book and over all books). Details: [docs/BOOKS.md](docs/BOOKS.md) |
+| Settings | Microsoft account, WebUntis login, Moodle login, digi4school login, notifications |
 
 **Own names and hiding (Teams tab).** Right click a team or channel (long press on the phone): *Rename* gives it your own display name, *Hide* moves it into the folded *Hidden* group at the bottom of the list (*Show* brings it back).
 - The name is used everywhere: teams list, channel header, class name in assignments, notifications, MCP tools. Search finds both your name and Microsoft's. An empty name puts Microsoft's back.
@@ -34,6 +35,8 @@ Everything the app keeps is in the `data` volume (`/data`):
 | `untis.json` | WebUntis login (0600) |
 | `absences.db` | SQLite: the raw WebUntis pull, own reasons per day, subject groups |
 | `moodle.json`, `moodle-token.json` | Moodle login (0600) and the web service token it got |
+| `digi4school.json`, `digi4school-state.json` | digi4school login (0600), blocked mark |
+| `books/` | downloaded books (`<id>/meta.json`, `p/<n>.svg`, `cover.jpg`) and `books.db` (text, full text index) |
 | `moodle-uploads/` | files on their way into a Moodle submission or publication, removed after an hour |
 | `mcp-token` | bearer token of the MCP endpoint |
 | `session-secret`, `app-password` | only used with `APP_AUTH=password` |
@@ -55,6 +58,10 @@ The login (server, school, user, password, place for the letter) is entered once
 ## Moodle
 
 Courses, files, assignments with hand-in, grades, choices and publications, through the Moodle app's web service with the login from Settings (publications through the website, they have no API). Everything about it: [docs/MOODLE.md](docs/MOODLE.md).
+
+## Books
+
+The digi4school books: reader, contents, full text search, MCP `books_*`. The text comes from the book's own `assets/content.xml`, no OCR. Everything about it: [docs/BOOKS.md](docs/BOOKS.md).
 
 ## How it runs
 

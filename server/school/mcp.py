@@ -16,7 +16,7 @@ from urllib.parse import unquote
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from . import absences_api, config, mail, moodle, moodle_api, timetable, upstream
+from . import absences_api, books, books_api, config, mail, moodle, moodle_api, timetable, upstream
 
 TOKEN = config._secret_file("mcp-token", lambda: __import__("secrets").token_urlsafe(36))
 PROTOCOL = "2025-06-18"
@@ -371,6 +371,7 @@ TOOLS.update(
 TOOLS.update(absences_api.TOOLS)
 TOOLS.update(timetable.TOOLS)
 TOOLS.update(moodle_api.TOOLS)
+TOOLS.update(books_api.TOOLS)
 WRITES = (
     {"send_message", "send_mail", "reply_mail", "add_assignment_file", "remove_assignment_file", "turn_in", "undo_turn_in"}
     | absences_api.WRITES
@@ -402,7 +403,7 @@ async def _call(name: str, args: dict) -> dict:
         return {"content": out if isinstance(out, list) else [{"type": "text", "text": out}]}
     except upstream.Upstream as e:
         return {"content": [{"type": "text", "text": f"Microsoft error {e.status}: {e}"}], "isError": True}
-    except (absences_api.Fail, timetable.Fail, moodle.MoodleError) as e:
+    except (absences_api.Fail, timetable.Fail, moodle.MoodleError, books.BooksError) as e:
         return {"content": [{"type": "text", "text": str(e)}], "isError": True}
     except (ValueError, TypeError) as e:
         return {"content": [{"type": "text", "text": f"Bad arguments: {e}"}], "isError": True}
@@ -445,7 +446,7 @@ async def _one(m: dict) -> dict | None:
             {
                 "protocolVersion": params.get("protocolVersion") or PROTOCOL,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "school", "version": "0.4.0"},
+                "serverInfo": {"name": "school", "version": "0.5.0"},
                 "instructions": "The user's school hub (HTL Spengergasse). Microsoft account: Teams chats, class teams, channel files, "
                 "assignments and Outlook mail. Reading is free; send_message, send_mail and reply_mail act as the user on the real "
                 "school account, so only send what the user asked for. WebUntis absences: absence days with the user's own reason "
@@ -455,7 +456,8 @@ async def _one(m: dict) -> dict | None:
                 "moodle_courses for course ids, moodle_course_contents to find files, moodle_read_file to read them; "
                 "moodle_choice/moodle_choose for choices (votes), moodle_publication/moodle_publication_change for student file folders. "
                 "WebUntis timetable, exams and homework: tools timetable, exams, homework. Teams assignments: upload_link, then "
-                "add_assignment_file, remove_assignment_file, turn_in, undo_turn_in. Every write (send, submit, turn in, vote, "
+                "add_assignment_file, remove_assignment_file, turn_in, undo_turn_in. School books (digi4school): books_list, "
+                "books_search (full text, printed page numbers), books_read (printed pages or a chapter). Every write (send, submit, turn in, vote, "
                 "upload, remove) changes the real school account: only on the user's word.",
             }
         )

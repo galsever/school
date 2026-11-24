@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-from . import absences_api, auth, config, mail, mcp, moodle, moodle_api, prefs, upstream
+from . import absences_api, auth, books, books_api, config, mail, mcp, moodle, moodle_api, prefs, upstream
 from .ms import NotConnected, session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -55,6 +55,15 @@ async def _moodle(request: Request, exc: moodle.MoodleError):
     log.warning("moodle %s %s: %s", request.url.path, exc.code, exc)
     status = {"not_found": 404, "web_login": 502, "bad_url": 400, "bad_request": 400, "locked": 400, "warning": 400}.get(exc.code, 502)
     return JSONResponse({"error": "moodle", "detail": str(exc)[:300]}, status_code=status)
+
+
+@app.exception_handler(books.BooksError)
+async def _books(request: Request, exc: books.BooksError):
+    if exc.not_connected:
+        return JSONResponse({"error": "books_not_connected", "detail": str(exc)}, status_code=409)
+    log.warning("books %s %s: %s", request.url.path, exc.code, exc)
+    status = {"not_found": 404, "bad_request": 400, "no_text": 400, "loading": 409}.get(exc.code, 502)
+    return JSONResponse({"error": "books", "detail": str(exc)[:300]}, status_code=status)
 
 
 # ---- app login (only when APP_AUTH=password) ---------------------------------
@@ -374,6 +383,7 @@ app.include_router(absences_api.public)
 # ---- Moodle ----------------------------------------------------------------------------
 
 app.include_router(moodle_api.router)
+app.include_router(books_api.router)
 app.include_router(moodle_api.public)
 
 

@@ -130,6 +130,25 @@ Errors: 409 `moodle_not_connected` (no login, or Moodle rejects it), 400 / 404 /
 | `GET/POST /api/moodle/login` | `{configured, url, user, blocked}` / `{user, password, url?}`; the password is never returned, empty keeps it |
 | `PUT /api/mcp/moodle-upload/{id}?exp=&sig=`, `GET /api/mcp/moodle-file?url=&exp=&sig=` | signed 15 min links from the MCP tools `moodle_upload_link` and `moodle_read_file`, no login |
 
+## Books (digi4school)
+
+The school books from digi4school.at (docs/BOOKS.md). Own login (`/data/digi4school.json`), checked once before it is
+stored; a rejected login blocks every call until it is changed. A book is downloaded into `/data/books/<id>` the first time
+it is opened. Page numbers `n` are viewer pages (1-based, all volumes in a row); `label` is the printed page.
+Errors: 409 `books_not_connected`, 404 / 400 / 502 `books`.
+
+| Route | What |
+|---|---|
+| `GET /api/books?refresh=` | `{configured, user, blocked, books[]}`: a book has `id, code, title, publisher, state (none, loading, text, partial, ready, error), pages, done, error, cover, text`. The shelf is cached 5 min; `refresh` reads it again |
+| `POST /api/books/{id}/open` | starts the download unless the book is there -> the book: `{id, title, publisher, pages[] {label, w, h}, toc[] {title, page}, state, done, error, text}` (`pages` empty until the text is in) |
+| `GET /api/books/{id}` | the same without starting anything; 404 when never opened |
+| `DELETE /api/books/{id}` | drops the downloaded files and text |
+| `GET /api/books/{id}/pages/{n}.svg` | one page, images inlined, cached for good; 404 while not downloaded |
+| `GET /api/books/{id}/text/{n}` | the page's text runs `[[x, top, width, height, text]]` in the SVG's coordinates |
+| `GET /api/books/{id}/cover.jpg` | first page thumbnail |
+| `GET /api/books/search?q=&book=` | full text search (word prefixes, accents ignored): `[{book, page, label, snippet, title}]`, `[...]` marks the words; with `book` that book in page order (200 max), else the best 60 over all books |
+| `GET/POST /api/books/login` | `{configured, user, blocked}` / `{user (email), password}`; empty password keeps it |
+
 ## MCP
 
 `POST /api/mcp`: MCP over streamable HTTP (stateless JSON-RPC), bearer token from `DATA_DIR/mcp-token`. Not behind the Pocket ID gate (personal-infra `apps/school-hub/mcp-route.yaml`), tailnet only.
@@ -143,6 +162,7 @@ Errors: 409 `moodle_not_connected` (no login, or Moodle rejects it), 400 / 404 /
 | Absences | `absence_days`, `new_open_days`, `set_reason`, `attendance`, `excuse_pdf`, `refresh` |
 | WebUntis | `timetable`, `exams`, `homework` |
 | Uploads | `upload_link` (`moodle_upload_link` is the same tool) |
+| Books | `books_list`, `books_search`, `books_read` |
 | Moodle | `moodle_deadlines`, `moodle_courses`, `moodle_course_contents`, `moodle_assignment`, `moodle_grades`, `moodle_read_file`, `moodle_upload_link`, `moodle_submit_assignment`, `moodle_choice`, `moodle_choose`, `moodle_publication`, `moodle_publication_change` |
 
 Writing tools (readOnlyHint false, only on the owner's word): `send_message`, `send_mail`, `reply_mail`, the Teams assignment writes `add_assignment_file`, `remove_assignment_file`, `turn_in`, `undo_turn_in` (allowed since his decision 2026-11-10, before that no turn-in via MCP), `set_reason`, `new_open_days` (marks days asked), `upload_link`, `moodle_submit_assignment`, `moodle_choose`, `moodle_publication_change`.

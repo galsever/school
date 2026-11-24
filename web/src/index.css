@@ -112,3 +112,15 @@
 /* Mail editor: placeholder while empty */
 .tm-editor.tm-empty::before { content: attr(data-placeholder); position: absolute; color: var(--muted-foreground); pointer-events: none; }
 .tm-editor img { max-height: 240px; cursor: default; }
+
+/* Books: the page text lies invisible over the drawing (select, copy, Ctrl+F) */
+.book-text text {
+  fill: transparent;
+  white-space: pre;
+  font-family: sans-serif;
+  cursor: text;
+}
+.book-text text::selection {
+  fill: transparent;
+  background: rgb(59 130 246 / 0.35);
+}

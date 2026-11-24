@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { absencesApi, absencesQ, type UntisLoginInput } from '@/lib/absences'
 import { api, errorText } from '@/lib/api'
+import { booksApi, booksQ } from '@/lib/books'
 import { forgetMoodle, moodleApi, moodleQ } from '@/lib/moodle'
 import { q, queryClient } from '@/lib/query'
 
@@ -56,6 +57,7 @@ export function SettingsPage() {
       </section>
       <UntisCard />
       <MoodleCard />
+      <BooksCard />
     </div>
   )
 }
@@ -188,6 +190,78 @@ function MoodleCard() {
           }}
         >
           <Input aria-label="User" placeholder="User" autoComplete="off" value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })} />
+          <Input
+            type="password"
+            aria-label="Password"
+            placeholder={configured && !blocked ? 'Password (unchanged)' : 'Password'}
+            autoComplete="new-password"
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+          />
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setForm(null)}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={saving}>
+              Save
+            </Button>
+          </div>
+        </form>
+      )}
+    </section>
+  )
+}
+
+/** digi4school login for the Books tab; the server checks it once at digi4school before storing it. */
+function BooksCard() {
+  const qc = useQueryClient()
+  const login = useQuery(booksQ.login())
+  const [form, setForm] = useState<{ user: string; password: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+  if (!login.data) return null
+  const { configured, user, blocked } = login.data
+
+  const save = async () => {
+    if (!form) return
+    setSaving(true)
+    try {
+      await booksApi.saveLogin(form)
+      setForm(null)
+      await qc.invalidateQueries({ queryKey: ['books-login'] })
+      await qc.invalidateQueries({ queryKey: ['books'] })
+    } catch (e) {
+      toast.error(errorText(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="mt-3 rounded-xl bg-card p-4">
+      <div className="flex items-center gap-3">
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium">digi4school</span>
+          {configured && (
+            <span className={`block truncate text-sm ${blocked ? 'text-destructive' : 'text-muted-foreground'}`}>
+              {blocked ? 'Login rejected' : user}
+            </span>
+          )}
+        </span>
+        {!form && (
+          <Button variant={configured && !blocked ? 'secondary' : 'default'} size="sm" onClick={() => setForm({ user, password: '' })}>
+            {configured ? 'Edit' : 'Connect'}
+          </Button>
+        )}
+      </div>
+      {form && (
+        <form
+          className="mt-3 space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void save()
+          }}
+        >
+          <Input aria-label="Email" placeholder="Email" type="email" autoComplete="off" value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })} />
           <Input
             type="password"
             aria-label="Password"
